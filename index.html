@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>AnimeZone</title>
+
+  <link rel="icon" type="image/png" sizes="32x32" href="Onglet-32.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icone-512.png">
+  <link rel="apple-touch-icon" href="Onglet.png">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#161D2E">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AnimeZone">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div class="fond" aria-hidden="true">
+    <span class="halo-piste"><span class="halo"></span></span>
+  </div>
+
+  <!-- ══ Connexion ══ -->
+  <div id="auth-screen" class="auth-screen" hidden role="dialog" aria-modal="true" aria-label="Connexion">
+    <div class="auth-layout">
+      <div class="auth-box">
+        <button type="button" id="auth-fermer" class="auth-fermer" aria-label="Fermer">×</button>
+        <p class="auth-titre">Suivre tes séries</p>
+        <p class="auth-intro">
+          Un compte sert uniquement à garder ta liste et tes notes. Tout le reste
+          du site est consultable sans rien créer.
+        </p>
+        <div id="login-view">
+          <form id="auth-form" class="auth-form" novalidate>
+            <div class="field">
+              <label for="email">Adresse e-mail</label>
+              <input type="email" id="email" autocomplete="email" required>
+            </div>
+
+            <div class="field" id="pseudo-field" hidden>
+              <label for="pseudo">Pseudo</label>
+              <input type="text" id="pseudo" autocomplete="username" minlength="3" maxlength="20">
+              <p class="field-hint">3 à 20 caractères : lettres, chiffres, tiret et tiret bas.</p>
+            </div>
+
+            <div class="field">
+              <label for="password">Mot de passe</label>
+              <input type="password" id="password" autocomplete="current-password" minlength="6" required>
+            </div>
+
+            <p id="auth-error" class="form-error" role="alert" hidden></p>
+            <button type="submit" id="auth-submit" class="btn-primary">Se connecter</button>
+          </form>
+
+          <p class="auth-forgot" id="auth-forgot-wrap">
+            <button type="button" id="auth-forgot" class="btn-link">Mot de passe oublié ?</button>
+          </p>
+
+          <p class="auth-switch">
+            <span id="auth-switch-text">Pas encore de compte ?</span>
+            <button type="button" id="auth-toggle" class="btn-link">Créer un compte</button>
+          </p>
+
+        </div>
+
+        <div id="reset-view" hidden>
+          <p class="auth-intro">Indique l'adresse de ton compte. Tu recevras un lien pour choisir un nouveau mot de passe.</p>
+          <form id="reset-form" class="auth-form" novalidate>
+            <div class="field">
+              <label for="reset-email">Adresse e-mail du compte</label>
+              <input type="email" id="reset-email" autocomplete="off" required>
+            </div>
+            <p id="reset-error" class="form-error" role="alert" hidden></p>
+            <button type="submit" id="reset-submit" class="btn-primary">Envoyer le lien</button>
+          </form>
+          <p class="auth-forgot">
+            <button type="button" id="reset-back" class="btn-link">Retour à la connexion</button>
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Application ══ -->
+  <div id="app-screen" hidden>
+    <header class="topbar">
+      <h1 class="wordmark">AnimeZone</h1>
+
+      <nav class="tabs" aria-label="Sections">
+        <button type="button" class="tab is-active" data-vue="avenir" aria-current="page">
+          <svg class="tab-icone" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="5" width="18" height="16" rx="2"/>
+            <path d="M3 10 H21 M8 3 V7 M16 3 V7"/>
+          </svg>
+          <span>À venir</span>
+        </button>
+        <button type="button" class="tab" data-vue="decouvrir">
+          <svg class="tab-icone" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M15.5 8.5 L10.5 10.5 L8.5 15.5 L13.5 13.5 Z"/>
+          </svg>
+          <span>Découvrir</span>
+        </button>
+        <button type="button" class="tab" data-vue="liste">
+          <svg class="tab-icone" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="14" rx="2"/>
+            <path d="M10 9 L15 11.5 L10 14 Z"/><path d="M8 21 H16"/>
+          </svg>
+          <span>Ma liste</span>
+        </button>
+      </nav>
+
+      <div class="topbar-right">
+        <span id="user-email" class="user-email" hidden></span>
+        <button type="button" id="logout" class="btn-link" hidden>Se déconnecter</button>
+        <button type="button" id="ouvrir-connexion" class="btn-primary btn-compact" hidden>
+          Créer un compte
+        </button>
+      </div>
+    </header>
+
+    <main class="wrap">
+
+      <!-- ── À venir ── -->
+      <section id="view-avenir">
+        <h2 class="section-title">Les sorties les plus attendues</h2>
+        <p class="section-note">
+          Classées par nombre de personnes qui les ont déjà mises de côté — c'est
+          la mesure de la hype chez AniList.
+        </p>
+        <div id="avenir-liste" class="grille"></div>
+      </section>
+
+      <!-- ── Découvrir ── -->
+      <section id="view-decouvrir" hidden>
+        <form id="search-form" class="search-form" role="search">
+          <label for="search-input" class="visually-hidden">Chercher un anime</label>
+          <input type="search" id="search-input" placeholder="Chercher un anime…" autocomplete="off">
+        </form>
+        <div id="search-results" class="search-results" hidden></div>
+
+        <h2 class="section-title">Par catégorie</h2>
+        <div id="categories" class="categories" role="group" aria-label="Catégories"></div>
+        <p class="section-note" id="categorie-note"></p>
+        <div id="categorie-liste" class="grille"></div>
+      </section>
+
+      <!-- ── Ma liste ── -->
+      <section id="view-liste" hidden>
+        <div id="liste-invite" class="invite" hidden>
+          <h2 class="section-title">Garde une trace de ce que tu regardes</h2>
+          <p class="section-note">
+            Avec un compte, tu peux suivre où tu en es épisode par épisode, noter
+            les séries et retrouver ta liste sur tous tes appareils. C'est gratuit
+            et ça prend dix secondes.
+          </p>
+          <button type="button" id="invite-connexion" class="btn-primary">Créer mon compte</button>
+        </div>
+
+        <div id="liste-contenu">
+        <div id="stats" class="stats" hidden>
+          <p><strong id="stat-suivis">0</strong> séries suivies</p>
+          <p><strong id="stat-episodes">0</strong> épisodes vus</p>
+          <p><strong id="stat-termines">0</strong> terminées</p>
+        </div>
+
+        <div class="filtres" role="group" aria-label="Filtrer ma liste">
+          <button type="button" class="filtre is-active" data-statut="tous">Tous</button>
+          <button type="button" class="filtre" data-statut="en_cours">En cours</button>
+          <button type="button" class="filtre" data-statut="a_voir">À voir</button>
+          <button type="button" class="filtre" data-statut="termine">Terminés</button>
+        </div>
+
+        <div id="liste" class="grille"></div>
+        <p id="liste-vide" class="empty-state" hidden>
+          Rien ici pour l'instant. Passe par À venir ou Découvrir pour ajouter une série.
+        </p>
+        <p id="loading" class="loading" hidden>Chargement…</p>
+        </div>
+      </section>
+
+      <!-- ── Fiche ── -->
+      <section id="view-fiche" hidden>
+        <button type="button" id="fiche-retour" class="btn-link back-link">Retour</button>
+
+        <div class="fiche-tete">
+          <img id="fiche-cover" class="fiche-cover" alt="" referrerpolicy="no-referrer">
+          <div class="fiche-meta">
+            <h2 class="fiche-titre" id="fiche-titre"></h2>
+            <p class="fiche-sous" id="fiche-sous"></p>
+            <div id="fiche-genres" class="etiquettes"></div>
+            <p class="fiche-diffusion" id="fiche-diffusion"></p>
+
+            <div id="fiche-suivi" hidden>
+              <div class="progress"><span id="fiche-barre"></span></div>
+              <p class="fiche-progression" id="fiche-progression"></p>
+
+              <div class="episode-actions">
+                <button type="button" id="ep-moins" class="btn-rond" aria-label="Retirer un épisode">−</button>
+                <button type="button" id="ep-plus" class="btn-primary">J'ai vu l'épisode suivant</button>
+                <button type="button" id="ep-choisir" class="btn-link">Saisir un numéro</button>
+              </div>
+
+              <div class="statuts" role="group" aria-label="Statut">
+                <button type="button" class="statut" data-statut="a_voir">À voir</button>
+                <button type="button" class="statut" data-statut="en_cours">En cours</button>
+                <button type="button" class="statut" data-statut="termine">Terminé</button>
+                <button type="button" class="statut" data-statut="abandonne">Abandonné</button>
+              </div>
+            </div>
+
+            <button type="button" id="fiche-ajouter" class="btn-primary" hidden>Ajouter à ma liste</button>
+          </div>
+        </div>
+
+        <div class="note-bloc">
+          <p class="note-ligne" id="fiche-note">Chargement des notes…</p>
+          <p class="note-libelle">Ta note</p>
+          <div class="note-choix" id="fiche-notes" role="group" aria-label="Noter cette série"></div>
+        </div>
+
+        <p class="fiche-resume" id="fiche-resume"></p>
+
+        <div class="danger" id="fiche-danger" hidden>
+          <button type="button" id="fiche-retirer" class="btn-danger">Retirer de ma liste</button>
+        </div>
+      </section>
+
+    </main>
+
+    <nav class="barre-basse" aria-label="Navigation principale">
+      <span class="barre-curseur" aria-hidden="true"></span>
+
+      <button type="button" class="onglet-bas is-active" data-vue="avenir">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="16" rx="2"/>
+          <path d="M3 10 H21 M8 3 V7 M16 3 V7"/>
+        </svg>
+        <span>À venir</span>
+      </button>
+
+      <button type="button" class="onglet-bas" data-vue="decouvrir">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M15.5 8.5 L10.5 10.5 L8.5 15.5 L13.5 13.5 Z"/>
+        </svg>
+        <span>Découvrir</span>
+      </button>
+
+      <button type="button" class="onglet-bas" data-vue="liste">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="14" rx="2"/>
+          <path d="M10 9 L15 11.5 L10 14 Z"/><path d="M8 21 H16"/>
+        </svg>
+        <span>Ma liste</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

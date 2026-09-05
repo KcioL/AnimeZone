@@ -1,0 +1,82 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Profil ──────────────────────────────────────────────
+    match /users/{userId} {
+      allow read:           if estProprietaire(userId);
+      allow create, update: if estProprietaire(userId) && profilValide();
+      allow delete:         if estProprietaire(userId);
+    }
+
+    // ── Séries suivies ──────────────────────────────────────
+    match /users/{userId}/animes/{animeId} {
+      allow read, delete:   if estProprietaire(userId);
+      allow create, update: if estProprietaire(userId) && animeValide();
+    }
+
+    // ── Réservation des pseudos ─────────────────────────────
+    // L'identifiant du document est le pseudo en minuscules : Firestore
+    // garantit donc qu'un seul compte peut le détenir.
+    match /usernames/{pseudo} {
+      // "get" seul autorise à tester si un pseudo est libre, sans permettre
+      // de lister toute la collection.
+      allow get:    if true;
+      allow list:   if false;
+      allow create: if request.auth != null
+                    && request.resource.data.keys().hasOnly(['uid'])
+                    && request.resource.data.uid == request.auth.uid
+                    && pseudo.size() >= 3 && pseudo.size() <= 20
+                    && pseudo.matches('^[a-z0-9_-]+$');
+      allow update: if false;
+      allow delete: if request.auth != null
+                    && resource.data.uid == request.auth.uid;
+    }
+
+    // ── Notes ───────────────────────────────────────────────
+    match /notes/{animeId}/votes/{userId} {
+      // Lecture ouverte : les moyennes s'affichent aussi pour les visiteurs
+      // non connectés, qui peuvent parcourir le site sans compte.
+      allow read: if true;
+
+      allow create, update: if request.auth != null
+                    && request.auth.uid == userId
+                    && request.resource.data.keys().hasOnly(['note', 'at'])
+                    && request.resource.data.note is int
+                    && request.resource.data.note >= 1
+                    && request.resource.data.note <= 10
+                    && request.resource.data.at is number;
+
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    function estProprietaire(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    function profilValide() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['pseudo', 'createdAt'])
+          && d.pseudo is string
+          && d.pseudo.size() >= 3 && d.pseudo.size() <= 20
+          && d.pseudo.matches('^[a-zA-Z0-9_-]+$')
+          && d.createdAt is number;
+    }
+
+    function animeValide() {
+      let d = request.resource.data;
+      return d.keys().hasOnly(['id', 'title', 'cover', 'episodes', 'vus', 'statut', 'addedAt'])
+          && d.id is string     && d.id.size() <= 32
+          && d.title is string  && d.title.size() > 0 && d.title.size() <= 300
+          && d.cover is string  && d.cover.size() <= 500
+          && d.episodes is int  && d.episodes >= 0 && d.episodes <= 5000
+          && d.vus is int       && d.vus >= 0 && d.vus <= 5000
+          // Le nombre d'épisodes vus ne peut pas dépasser le total annoncé,
+          // sauf pour une série dont le total est encore inconnu (0).
+          && (d.episodes == 0 || d.vus <= d.episodes)
+          && d.statut in ['a_voir', 'en_cours', 'termine', 'abandonne']
+          && d.addedAt is number;
+    }
+  }
+}
