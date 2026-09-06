@@ -187,6 +187,31 @@ button, input { font: inherit; color: inherit; }
 .auth-switch { margin: 22px 0 0; font-size: 0.88rem; color: var(--muted); }
 
 
+/* ── Bouton de modification d'une fiche ───── */
+
+/* Placé sous le titre plutôt qu'en bas du bloc : c'est là qu'on le cherche
+   quand on vient corriger un nom, et le gris discret du bouton fantôme le
+   rendait invisible au milieu du reste. */
+.btn-modifier {
+  display: inline-flex; align-items: center; gap: 7px;
+  margin: 2px 0 12px;
+  padding: 8px 15px; border-radius: 999px;
+  background: rgba(70, 212, 200, 0.12);
+  border: 1px solid rgba(70, 212, 200, 0.4);
+  color: var(--accent); font: inherit; font-size: 0.85rem; font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn-modifier:hover {
+  background: rgba(70, 212, 200, 0.2);
+  border-color: var(--accent);
+}
+.btn-modifier svg {
+  width: 15px; height: 15px; flex-shrink: 0;
+  fill: none; stroke: currentColor; stroke-width: 1.9;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
 /* ── Avatars ──────────────────────────────── */
 
 .avatar-choix {
