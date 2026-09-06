@@ -669,9 +669,32 @@ function carte(a, genre) {
     <span class="carte-meta">${escapeHtml(FORMATS[a.format] || a.format)}${a.annee ? ` · ${a.annee}` : ""}</span>
     <span class="carte-note">${texteNote(suivi)}</span>`;
 
-  el.addEventListener("click", () => ouvrirFiche(a));
+  el.__anime = a;
   return el;
 }
+
+/* Un seul écouteur pour toutes les cartes, posé sur le document.
+
+   Auparavant chaque carte portait le sien. Or les grilles sont reconstruites
+   de fond en comble : « Ma liste » à chaque retour de Firestore, les résultats
+   de recherche à chaque frappe. Si la reconstruction tombe entre le moment où
+   le doigt touche l'écran et celui où il le quitte, la carte touchée n'existe
+   plus, son écouteur est parti avec elle, et le toucher n'aboutit nulle part —
+   la carte s'éclaire pourtant, parce que la surbrillance, elle, est du CSS.
+   Un écouteur délégué survit à toutes les reconstructions. */
+document.addEventListener("click", async (ev) => {
+  const el = ev.target.closest?.(".carte");
+  if (!el) return;
+
+  const suivi = el.__suivi;
+  if (suivi) {
+    if (estLocale(suivi.id)) return ouvrirFiche(depuisSuivi(suivi));
+    try { ouvrirFiche(await parIdentifiant(suivi.id)); }
+    catch { ouvrirFiche(depuisSuivi(suivi)); }   // hors ligne : on affiche ce qu'on a
+    return;
+  }
+  if (el.__anime) ouvrirFiche(el.__anime);
+});
 
 /* ══════════════════ Ma liste ══════════════════ */
 
@@ -742,11 +765,7 @@ function afficherListe() {
       <span class="carte-meta">${LIBELLE_STATUT[s.statut] || ""}</span>
       <span class="carte-note">${texteNote(s)}</span>`;
 
-    el.addEventListener("click", async () => {
-      if (estLocale(s.id)) return ouvrirFiche(depuisSuivi(s));
-      try { ouvrirFiche(await parIdentifiant(s.id)); }
-      catch { ouvrirFiche(depuisSuivi(s)); }     // hors ligne : on affiche ce qu'on a
-    });
+    el.__suivi = s;
     grille.appendChild(el);
   });
 }
@@ -842,6 +861,13 @@ function ouvrirSerie(suivi = null) {
   $("serie-erreur").hidden  = true;
   $("serie-fichier").value  = "";
 
+  /* Une série liée à AniList voit sa fiche rechargée à chaque ouverture : un
+     titre corrigé serait écrasé dans la seconde. La modifier la détache donc
+     de la base, définitivement, et c'est assez lourd de conséquence pour être
+     annoncé avant plutôt que découvert après. */
+  const liee = suivi && !estLocale(suivi.id);
+  $("serie-detache").hidden = !liee;
+
   majApercuCouverture();
   setTimeout(() => $("serie-nom").focus(), 100);
 }
@@ -921,9 +947,30 @@ $("serie-valider").addEventListener("click", async () => {
   };
   if (note) { donnees.note = note; donnees.sur = sur; }
 
+  /* Détacher, c'est changer d'identifiant : « local_… » est précisément ce
+     qui dit au site de ne plus rien demander à AniList. On recrée donc la
+     fiche sous un nouvel identifiant, avec la progression et la note, puis on
+     supprime l'ancienne. Deux écritures, jamais de doublon visible. */
+  const detache = serieEnEdition && !estLocale(serieEnEdition);
+  if (detache) donnees.id = nouvelIdLocal();
+
   $("serie-valider").disabled = true;
   try {
     const ref = doc(db, "users", currentUser.uid, "animes", donnees.id);
+
+    if (detache) {
+      const ancien = listeCache.find((x) => x.id === serieEnEdition);
+      donnees.addedAt = ancien?.addedAt || donnees.addedAt;
+      await setDoc(ref, donnees);
+      await deleteDoc(doc(db, "users", currentUser.uid, "animes", serieEnEdition));
+      toast("Série détachée d'AniList et modifiée.");
+      if (ficheCourante?.id === serieEnEdition) {
+        ficheCourante = depuisSuivi({ ...donnees, note, sur });
+        majFiche();
+      }
+      fermerSerie();
+      return;
+    }
 
     if (serieEnEdition) {
       // On garde la date d'ajout d'origine : elle ordonne la liste.
@@ -1132,11 +1179,39 @@ const simplifier = (m) => ({
    noms de la série ne ressemble à ce qui était écrit : c'est le cas des
    titres en français, qu'AniList ne connaît pas. Ces lignes-là arrivent
    décochées, pour qu'une série jamais regardée n'entre pas dans la liste. */
+/* Le rapprochement se faisait sur un simple « commence par » ou « contient »,
+   sans regarder les longueurs. « nana » acceptait donc « nanatsu no taizai »,
+   et « parasite » n'importe quel titre débutant de même : une série jamais
+   regardée entrait dans la liste sous un nom crédible.
+
+   Deux garde-fous désormais. Un rapport de longueurs : un titre trois fois
+   plus long que le tien n'est pas le tien. Et une proportion de mots communs,
+   qui rattrape les orthographes flottantes — « kimetsu no yaiba/demon slayer »
+   partage assez de mots avec « Kimetsu no Yaiba » pour rester sûr, quand
+   « nana » n'en partage aucun avec « nanatsu no taizai ». */
 function confiance(media, cle) {
-  if (media.noms.includes(cle)) return 3;
-  if (media.noms.some((n) => n.startsWith(cle) || cle.startsWith(n))) return 2;
-  if (media.noms.some((n) => n.includes(cle) || cle.includes(n))) return 1;
-  return 0;
+  const motsA = cle.split(" ").filter(Boolean);
+  let meilleur = 0;
+
+  for (const n of media.noms) {
+    if (!n) continue;
+    if (n === cle) return 3;
+
+    const rapport = Math.min(n.length, cle.length) / Math.max(n.length, cle.length);
+
+    const motsB = n.split(" ").filter(Boolean);
+    const communs = motsA.filter((m) => motsB.includes(m)).length;
+    const recouvrement = (2 * communs) / (motsA.length + motsB.length);
+
+    let score = 0;
+    if ((n.startsWith(cle) || cle.startsWith(n)) && rapport >= 0.6) score = 2;
+    else if (recouvrement >= 0.7) score = 2;
+    else if ((n.includes(cle) || cle.includes(n)) && rapport >= 0.5) score = 1;
+    else if (recouvrement >= 0.5) score = 1;
+
+    meilleur = Math.max(meilleur, score);
+  }
+  return meilleur;
 }
 
 function classer(entree) {
@@ -1155,7 +1230,9 @@ function classer(entree) {
   // Une correspondance douteuse est décochée : mieux vaut une série absente
   // qu'une série jamais regardée dans la liste. Une absence totale de résultat,
   // en revanche, part en création manuelle — le titre, lui, est certain.
-  entree.garder = meilleur ? meilleurSur > 0 : true;
+  // Il faut désormais une correspondance franche pour être coché d'office.
+  // Le reste attend ton avis plutôt que d'entrer dans ta liste en douce.
+  entree.garder = meilleur ? meilleurSur >= 2 : true;
 }
 
 async function interrogerLot(titres) {
@@ -1416,7 +1493,7 @@ function ligneImport(e) {
   function peindre() {
     const trouve = !!e.choix;
     ligne.classList.toggle("est-introuvable", !trouve);
-    ligne.classList.toggle("est-douteuse", trouve && e.sur === 0);
+    ligne.classList.toggle("est-douteuse", trouve && e.sur < 2);
 
     coche.checked  = e.garder;
     coche.disabled = false;      // même sans jaquette, la série est importable
@@ -1437,24 +1514,37 @@ function ligneImport(e) {
         ? "Recherche impossible — créée sans jaquette, modifiable ensuite"
       : !trouve
         ? "Inconnue d'AniList — créée sans jaquette, modifiable ensuite"
-        : (e.sur === 0 ? `Correspondance incertaine · ta ligne : ${e.brut}` : `Ta ligne : ${e.brut}`);
+        : (e.sur < 2 ? `Correspondance incertaine · ta ligne : ${e.brut}` : `Ta ligne : ${e.brut}`);
 
-    alt.hidden = !trouve || e.candidats.length < 2;
+    alt.hidden = !e.candidats.length;
     if (!alt.hidden) {
       alt.innerHTML = "";
       e.candidats.forEach((c, i) => {
         const opt = document.createElement("option");
         opt.value = i;
         opt.textContent = c.title + (c.annee ? ` (${c.annee})` : "");
-        opt.selected = c.id === e.choix.id;
+        opt.selected = trouve && c.id === e.choix.id;
         alt.appendChild(opt);
       });
+      /* Quand aucune proposition ne convient, on refuse le rapprochement
+         plutôt que d'en accepter un mauvais : la série est créée sous ton
+         propre titre, modifiable ensuite. */
+      const perso = document.createElement("option");
+      perso.value = "local";
+      perso.textContent = `Aucune — créer « ${e.titre} » sans jaquette`;
+      perso.selected = !trouve;
+      alt.appendChild(perso);
     }
   }
 
   alt.addEventListener("change", () => {
-    e.choix = e.candidats[Number(alt.value)];
-    e.sur = Math.max(e.sur, 1);   // un choix manuel n'est plus une supposition
+    if (alt.value === "local") {
+      e.choix = null;             // création locale forcée
+      e.sur = 0;
+    } else {
+      e.choix = e.candidats[Number(alt.value)];
+      e.sur = Math.max(e.sur, 2); // un choix explicite n'est plus une supposition
+    }
     peindre();
     bilanImport();
   });
@@ -1637,7 +1727,7 @@ function majFiche() {
   $("fiche-resume").textContent = a.resume || "";
 
   afficherNotePerso(suivi);
-  $("fiche-modifier").hidden = !(suivi && estLocale(suivi.id));
+  $("fiche-modifier").hidden = !suivi;
 
   $("fiche-suivi").hidden   = !suivi;
   $("fiche-danger").hidden  = !suivi;
