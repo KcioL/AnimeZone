@@ -213,6 +213,7 @@ onAuthStateChanged(auth, async (user) => {
   $("liste-contenu").hidden    = !connecte;
 
   if (!connecte) {
+    montrerAvatar(null);
     if (unsubscribe) { unsubscribe(); unsubscribe = null; }
     listeCache = [];
     notesCache.clear();          // les notes personnelles ne valent plus
@@ -227,16 +228,23 @@ onAuthStateChanged(auth, async (user) => {
 
   try {
     const profil = await getDoc(doc(db, "users", user.uid));
-    if (profil.exists() && profil.data().pseudo) {
-      $("user-email").textContent = profil.data().pseudo;
+    if (profil.exists()) {
+      if (profil.data().pseudo) $("user-email").textContent = profil.data().pseudo;
+      montrerAvatar(profil.data().avatar);
     }
   } catch { /* le profil n'est pas indispensable à l'affichage */ }
 });
 
 /* ══════════════════ Fenêtre de connexion ══════════════════ */
 
-function ouvrirConnexion(motif) {
-    showReset(false);
+/* motif : message d'explication quand l'ouverture est provoquée par une action
+   qui exige un compte. modeVoulu : « signup » pour arriver directement sur la
+   création, puisqu'un bouton « Créer un compte » qui ouvre l'écran de
+   connexion demande un clic de plus pour rien. */
+function ouvrirConnexion(motif, modeVoulu = "login") {
+  $("auth-screen").hidden = false;
+  showReset(false);
+  appliquerMode(modeVoulu);
   if (motif) toast(motif);
   setTimeout(() => $("email").focus(), 100);
 }
@@ -246,8 +254,8 @@ function fermerConnexion() {
   hideError();
 }
 
-$("ouvrir-connexion").addEventListener("click", () => ouvrirConnexion());
-$("invite-connexion").addEventListener("click", () => ouvrirConnexion());
+$("ouvrir-connexion").addEventListener("click", () => ouvrirConnexion(null, "signup"));
+$("invite-connexion").addEventListener("click", () => ouvrirConnexion(null, "signup"));
 $("auth-fermer").addEventListener("click", fermerConnexion);
 
 // Clic sur le fond, ou touche Échap : deux façons attendues de refermer.
@@ -259,9 +267,14 @@ addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !$("auth-screen").hidden) fermerConnexion();
 });
 
-$("auth-toggle").addEventListener("click", () => {
-  mode = mode === "login" ? "signup" : "login";
-  const signup = mode === "signup";
+/* Un seul endroit décide de l'apparence du formulaire. Le bouton de bascule et
+   l'ouverture directe en création passent tous les deux par ici, sans quoi les
+   deux chemins finissent par diverger. */
+function appliquerMode(m) {
+  mode = m;
+  const signup = m === "signup";
+
+  $("auth-titre").textContent       = signup ? "Créer ton compte" : "Se connecter";
   $("auth-submit").textContent      = signup ? "Créer mon compte" : "Se connecter";
   $("auth-switch-text").textContent = signup ? "Tu as déjà un compte ?" : "Pas encore de compte ?";
   $("auth-toggle").textContent      = signup ? "Se connecter" : "Créer un compte";
@@ -269,8 +282,65 @@ $("auth-toggle").addEventListener("click", () => {
   $("auth-forgot-wrap").hidden      = signup;
   $("pseudo-field").hidden          = !signup;
   $("pseudo").required              = signup;
+  $("avatar-field").hidden          = !signup;
   hideError();
-});
+}
+
+$("auth-toggle").addEventListener("click", () =>
+  appliquerMode(mode === "login" ? "signup" : "login"));
+
+/* ══════════════════ Avatars ══════════════════
+
+   Six images posées dans le dossier « avatar/ ». C'est la seule liste à
+   modifier pour en ajouter, en retirer ou en renommer : le formulaire se
+   construit à partir d'elle, et les règles Firestore n'acceptent qu'un
+   identifiant de cette forme.
+   ═════════════════════════════════════════════ */
+
+const AVATARS = ["femme_1", "femme_2", "femme_3", "homme_1", "homme_2", "homme_3"];
+
+const cheminAvatar = (id) => `avatar/${id}.png`;
+
+let avatarChoisi = null;
+
+(function construireAvatars() {
+  const zone = $("avatar-choix");
+
+  AVATARS.forEach((id) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "avatar-option";
+    btn.setAttribute("aria-pressed", "false");
+    btn.setAttribute("aria-label", `Avatar ${id.replace("_", " ")}`);
+
+    const img = document.createElement("img");
+    img.src = cheminAvatar(id);
+    img.alt = "";
+    img.loading = "lazy";
+    btn.appendChild(img);
+
+    btn.addEventListener("click", () => {
+      // Recliquer sur le même avatar l'enlève : le choix reste facultatif.
+      avatarChoisi = avatarChoisi === id ? null : id;
+      zone.querySelectorAll(".avatar-option").forEach((b, i) => {
+        const actif = AVATARS[i] === avatarChoisi;
+        b.classList.toggle("is-active", actif);
+        b.setAttribute("aria-pressed", String(actif));
+      });
+    });
+
+    zone.appendChild(btn);
+  });
+})();
+
+/* Affiche l'avatar à côté du pseudo. Un compte sans avatar — les anciens, ou
+   ceux qui n'en ont pas voulu — se contente de son pseudo. */
+function montrerAvatar(id) {
+  const img = $("user-avatar");
+  const valide = id && AVATARS.includes(id);
+  img.hidden = !valide;
+  if (valide) img.src = cheminAvatar(id);
+}
 
 $("auth-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -314,10 +384,16 @@ async function creerCompte(email, pass) {
   const { user } = await createUserWithEmailAndPassword(auth, email, pass);
 
   try {
+    const profil = { pseudo, createdAt: Date.now() };
+    // Champ absent plutôt que vide : les règles refusent une valeur inconnue,
+    // et un compte sans avatar est un cas normal.
+    if (avatarChoisi) profil.avatar = avatarChoisi;
+
     await setDoc(doc(db, "usernames", cle), { uid: user.uid });
-    await setDoc(doc(db, "users", user.uid), { pseudo, createdAt: Date.now() });
+    await setDoc(doc(db, "users", user.uid), profil);
     await updateProfile(user, { displayName: pseudo });
     $("user-email").textContent = pseudo;
+    montrerAvatar(avatarChoisi);
   } catch (err) {
     console.error("Enregistrement du pseudo :", err.code, err.message);
     toast("Compte créé, mais le pseudo n'a pas pu être enregistré.");

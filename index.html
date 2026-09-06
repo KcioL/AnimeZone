@@ -31,7 +31,7 @@
     <div class="auth-layout">
       <div class="auth-box">
         <button type="button" id="auth-fermer" class="auth-fermer" aria-label="Fermer">×</button>
-        <p class="auth-titre">Suivre tes séries</p>
+        <p class="auth-titre" id="auth-titre">Se connecter</p>
         <p class="auth-intro">
           Un compte sert uniquement à garder ta liste et tes notes. Tout le reste
           du site est consultable sans rien créer.
@@ -52,6 +52,12 @@
             <div class="field">
               <label for="password">Mot de passe</label>
               <input type="password" id="password" autocomplete="current-password" minlength="6" required>
+            </div>
+
+            <div class="field" id="avatar-field" hidden>
+              <label id="avatar-label">Ton avatar</label>
+              <div id="avatar-choix" class="avatar-choix" role="group" aria-labelledby="avatar-label"></div>
+              <p class="field-hint">Facultatif. Clique à nouveau dessus pour l'enlever.</p>
             </div>
 
             <p id="auth-error" class="form-error" role="alert" hidden></p>
@@ -186,6 +192,7 @@
       </nav>
 
       <div class="topbar-right">
+        <img id="user-avatar" class="user-avatar" alt="" hidden>
         <span id="user-email" class="user-email" hidden></span>
         <button type="button" id="logout" class="btn-link" hidden>Se déconnecter</button>
         <button type="button" id="ouvrir-connexion" class="btn-primary btn-compact" hidden>

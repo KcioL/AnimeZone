@@ -187,6 +187,33 @@ button, input { font: inherit; color: inherit; }
 .auth-switch { margin: 22px 0 0; font-size: 0.88rem; color: var(--muted); }
 
 
+/* ── Avatars ──────────────────────────────── */
+
+.avatar-choix {
+  display: grid; grid-template-columns: repeat(6, 1fr);
+  gap: 8px; margin-bottom: 6px;
+}
+
+.avatar-option {
+  padding: 0; aspect-ratio: 1; overflow: hidden;
+  background: var(--bg); border: 2px solid var(--line); border-radius: 50%;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.12s;
+}
+.avatar-option img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.avatar-option:hover { border-color: var(--muted); transform: translateY(-2px); }
+
+.avatar-option.is-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(70, 212, 200, 0.22);
+}
+
+.user-avatar {
+  width: 30px; height: 30px; flex-shrink: 0;
+  border-radius: 50%; object-fit: cover;
+  border: 1px solid var(--line); background: var(--raised);
+}
+
 /* ── Import d'une liste ───────────────────── */
 
 /* Même fenêtre superposée que la connexion, mais plus large : la
