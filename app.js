@@ -5,9 +5,8 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, getDoc, setDoc, deleteDoc, updateDoc, writeBatch,
-  onSnapshot, query, orderBy,
-  getAggregateFromServer, average, count
+  collection, doc, getDoc, setDoc, deleteDoc, updateDoc, deleteField, writeBatch,
+  onSnapshot, query, orderBy
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -216,7 +215,6 @@ onAuthStateChanged(auth, async (user) => {
     montrerAvatar(null);
     if (unsubscribe) { unsubscribe(); unsubscribe = null; }
     listeCache = [];
-    notesCache.clear();          // les notes personnelles ne valent plus
     if (ficheCourante) majFiche();
     rafraichirCartes();
     return;
@@ -651,28 +649,11 @@ function carte(a, genre) {
     </span>
     <span class="carte-nom">${escapeHtml(a.title)}</span>
     <span class="carte-meta">${escapeHtml(FORMATS[a.format] || a.format)}${a.annee ? ` · ${a.annee}` : ""}</span>
-    <span class="carte-note"></span>`;
+    <span class="carte-note">${texteNote(suivi)}</span>`;
 
   el.addEventListener("click", () => ouvrirFiche(a));
-  observateurNotes.observe(el);
   return el;
 }
-
-/* Les moyennes ne sont demandées que pour les cartes qui entrent à l'écran :
-   interroger d'un coup trente titres ferait autant de requêtes pour des
-   séries que personne ne regardera. */
-const observateurNotes = new IntersectionObserver((entrees) => {
-  entrees.forEach((e) => {
-    if (!e.isIntersecting) return;
-    observateurNotes.unobserve(e.target);
-    chargerNote(e.target.dataset.anime)
-      .then((n) => {
-        const cible = e.target.querySelector(".carte-note");
-        if (cible && n.moyenne !== null) cible.textContent = texteNote(n);
-      })
-      .catch(() => { /* une moyenne absente ne casse pas la grille */ });
-  });
-}, { rootMargin: "300px" });
 
 /* ══════════════════ Ma liste ══════════════════ */
 
@@ -741,13 +722,13 @@ function afficherListe() {
       </span>
       <span class="carte-nom">${escapeHtml(s.title)}</span>
       <span class="carte-meta">${LIBELLE_STATUT[s.statut] || ""}</span>
-      <span class="carte-note"></span>`;
+      <span class="carte-note">${texteNote(s)}</span>`;
 
     el.addEventListener("click", async () => {
+      if (estLocale(s.id)) return ouvrirFiche(depuisSuivi(s));
       try { ouvrirFiche(await parIdentifiant(s.id)); }
       catch { ouvrirFiche(depuisSuivi(s)); }     // hors ligne : on affiche ce qu'on a
     });
-    observateurNotes.observe(el);
     grille.appendChild(el);
   });
 }
@@ -760,6 +741,7 @@ const LIBELLE_STATUT = {
 /* Reconstitue une fiche minimale depuis ce qui est enregistré, pour que la
    consultation reste possible sans réseau. */
 const depuisSuivi = (s) => ({
+  locale: estLocale(s.id),
   id: s.id, title: s.title, cover: s.cover, resume: "",
   episodes: s.episodes, format: "", statutDiff: "", saison: "",
   annee: null, genres: [], hype: 0, favoris: 0, debut: null,
@@ -769,6 +751,10 @@ const depuisSuivi = (s) => ({
 function rafraichirCartes() {
   document.querySelectorAll(".carte[data-anime]").forEach((el) => {
     const suivi = listeCache.find((s) => s.id === el.dataset.anime);
+
+    const note = el.querySelector(".carte-note");
+    if (note) note.textContent = texteNote(suivi);
+
     const img = el.querySelector(".carte-img");
     const badge = img.querySelector(".carte-suivi");
     if (suivi && !badge && !el.closest("#liste")) {
@@ -778,6 +764,173 @@ function rafraichirCartes() {
     }
   });
 }
+
+/* ══════════════════ Séries saisies à la main ══════════════════
+
+   AniList ne connaît pas tout : les titres français, les séries confidentielles,
+   celles dont l'orthographe résiste. Plutôt que de les perdre, on les crée
+   localement. Leur identifiant commence par « local_ », ce qui suffit à savoir
+   qu'il ne faut pas aller les chercher en ligne, et qu'elles sont modifiables.
+   ══════════════════════════════════════════════════════════════ */
+
+const ID_LOCAL = "local_";
+const estLocale = (id) => String(id || "").startsWith(ID_LOCAL);
+const nouvelIdLocal = () =>
+  ID_LOCAL + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+let serieEnEdition = null;   // identifiant en cours de modification, sinon null
+let couvertureChoisie = null;
+
+/* Une photo de téléphone pèse plusieurs mégaoctets ; un document Firestore est
+   plafonné à un. On redimensionne donc dans le navigateur avant d'enregistrer,
+   aux proportions d'une jaquette. */
+async function imageReduite(fichier, largeurMax, qualite) {
+  const bitmap = await createImageBitmap(fichier, { imageOrientation: "from-image" });
+  const ratio = Math.min(1, largeurMax / bitmap.width);
+  const l = Math.round(bitmap.width * ratio);
+  const h = Math.round(bitmap.height * ratio);
+
+  const toile = document.createElement("canvas");
+  toile.width = l; toile.height = h;
+  toile.getContext("2d").drawImage(bitmap, 0, 0, l, h);
+  bitmap.close?.();
+  return toile.toDataURL("image/jpeg", qualite);
+}
+
+async function preparerCouverture(fichier) {
+  let data = await imageReduite(fichier, 420, 0.72);
+  if (data.length > 200000) data = await imageReduite(fichier, 340, 0.6);
+  if (data.length > 200000) data = await imageReduite(fichier, 260, 0.5);
+  if (data.length > 280000) throw new Error("image-trop-lourde");
+  return data;
+}
+
+function ouvrirSerie(suivi = null) {
+  if (!currentUser) return ouvrirConnexion("Crée un compte pour tenir ta liste.", "signup");
+
+  serieEnEdition = suivi?.id || null;
+  couvertureChoisie = suivi?.cover || null;
+
+  $("serie-screen").hidden = false;
+  $("serie-titre-fenetre").textContent = suivi ? "Modifier la série" : "Ajouter une série";
+  $("serie-valider").textContent = suivi ? "Enregistrer" : "Ajouter à ma liste";
+
+  $("serie-nom").value      = suivi?.title || "";
+  $("serie-episodes").value = suivi?.episodes || "";
+  $("serie-vus").value      = suivi?.vus ?? 0;
+  $("serie-statut").value   = suivi?.statut || "termine";
+  $("serie-note").value     = suivi?.note || "";
+  $("serie-sur").value      = String(suivi?.sur || echellePreferee);
+  $("serie-erreur").hidden  = true;
+  $("serie-fichier").value  = "";
+
+  majApercuCouverture();
+  setTimeout(() => $("serie-nom").focus(), 100);
+}
+
+function fermerSerie() { $("serie-screen").hidden = true; }
+
+function majApercuCouverture() {
+  const img = $("serie-apercu");
+  img.hidden = !couvertureChoisie;
+  $("serie-sans-image").hidden = !!couvertureChoisie;
+  $("serie-retirer-image").hidden = !couvertureChoisie;
+  if (couvertureChoisie) img.src = couvertureChoisie;
+}
+
+$("ouvrir-serie").addEventListener("click", () => ouvrirSerie());
+$("serie-fermer").addEventListener("click", fermerSerie);
+$("serie-annuler").addEventListener("click", fermerSerie);
+$("serie-screen").addEventListener("click", (e) => {
+  if (e.target === $("serie-screen")) fermerSerie();
+});
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("serie-screen").hidden) fermerSerie();
+});
+
+$("fiche-modifier").addEventListener("click", () => {
+  const s = listeCache.find((x) => x.id === ficheCourante?.id);
+  if (s) ouvrirSerie(s);
+});
+
+$("serie-retirer-image").addEventListener("click", () => {
+  couvertureChoisie = null;
+  $("serie-fichier").value = "";
+  majApercuCouverture();
+});
+
+$("serie-fichier").addEventListener("change", async () => {
+  const fichier = $("serie-fichier").files?.[0];
+  if (!fichier) return;
+
+  $("serie-sans-image").textContent = "Préparation de l'image…";
+  try {
+    couvertureChoisie = await preparerCouverture(fichier);
+    majApercuCouverture();
+  } catch (err) {
+    console.error("Image :", err);
+    toast("Cette image n'a pas pu être préparée. Essaie une autre photo.");
+  } finally {
+    $("serie-sans-image").textContent = "Aucune image";
+  }
+});
+
+$("serie-valider").addEventListener("click", async () => {
+  const titre = $("serie-nom").value.trim();
+  if (titre.length < 1) {
+    $("serie-erreur").textContent = "Il faut au moins un titre.";
+    $("serie-erreur").hidden = false;
+    return $("serie-nom").focus();
+  }
+
+  const episodes = Math.min(Math.max(parseInt($("serie-episodes").value, 10) || 0, 0), 5000);
+  let vus = Math.min(Math.max(parseInt($("serie-vus").value, 10) || 0, 0), 5000);
+  // Le serveur refuse une progression supérieure au total annoncé.
+  if (episodes && vus > episodes) vus = episodes;
+
+  const sur = echelleRangee($("serie-sur").value);
+  const brute = parseInt($("serie-note").value, 10);
+  const note = Number.isInteger(brute) && brute >= 1 ? Math.min(brute, sur) : null;
+  echellePreferee = sur;
+
+  const donnees = {
+    id: serieEnEdition || nouvelIdLocal(),
+    title: titre.slice(0, 300),
+    cover: couvertureChoisie || "",
+    episodes, vus,
+    statut: $("serie-statut").value,
+    addedAt: Date.now()
+  };
+  if (note) { donnees.note = note; donnees.sur = sur; }
+
+  $("serie-valider").disabled = true;
+  try {
+    const ref = doc(db, "users", currentUser.uid, "animes", donnees.id);
+
+    if (serieEnEdition) {
+      // On garde la date d'ajout d'origine : elle ordonne la liste.
+      const ancien = listeCache.find((x) => x.id === serieEnEdition);
+      donnees.addedAt = ancien?.addedAt || donnees.addedAt;
+      if (!note) { donnees.note = deleteField(); donnees.sur = deleteField(); }
+      await updateDoc(ref, donnees);
+      toast("Série modifiée.");
+      if (ficheCourante?.id === serieEnEdition) {
+        ficheCourante = depuisSuivi({ ...donnees, note, sur });
+        majFiche();
+      }
+    } else {
+      await setDoc(ref, donnees);
+      toast(`${titre} est dans ta liste.`);
+    }
+    fermerSerie();
+  } catch (err) {
+    console.error("Série :", err.code, err.message);
+    $("serie-erreur").textContent = "L'enregistrement a échoué. L'image est peut-être trop lourde.";
+    $("serie-erreur").hidden = false;
+  } finally {
+    $("serie-valider").disabled = false;
+  }
+});
 
 /* ══════════════════ Import d'une liste ══════════════════
 
@@ -803,10 +956,15 @@ const cleTitre = (s) => String(s || "")
   .replace(/[^a-z0-9]+/g, " ")
   .trim();
 
-const surDix = (valeur, max) =>
+/* La note est ramenée à l'échelle choisie, pas systématiquement sur 10 :
+   un 17/20 reste un 17/20. Passer par 10 écraserait 17 et 18 sur la même
+   valeur, et 19 et 20 aussi. */
+let echelleImport = 20;
+
+const surEchelle = (valeur, max) =>
   (!Number.isFinite(valeur) || !max)
     ? null
-    : Math.min(10, Math.max(1, Math.round((valeur / max) * 10)));
+    : Math.min(echelleImport, Math.max(1, Math.round((valeur / max) * echelleImport)));
 
 /* Une liste tenue dans les notes du téléphone est pleine d'annotations
    personnelles : « (attente saison 2) », « (ost : sparkle) », « arrêt épisode
@@ -859,7 +1017,7 @@ function analyserLigne(ligne, echelle) {
     if (!titre || !aDuTexte(titre)) return;
     entrees.push(creerEntree(
       titre,
-      surDix(parseFloat(m[1].replace(",", ".")), Number(m[2])),
+      surEchelle(parseFloat(m[1].replace(",", ".")), Number(m[2])),
       source
     ));
   });
@@ -881,7 +1039,7 @@ function sansFraction(source, echelle) {
   if (entreParentheses) {
     const valeur = parseFloat(entreParentheses[1].replace(",", "."));
     if (valeur >= 1 && valeur <= echelle) {
-      note  = surDix(valeur, echelle);
+      note  = surEchelle(valeur, echelle);
       reste = source.slice(0, entreParentheses.index);
     }
   } else {
@@ -891,7 +1049,7 @@ function sansFraction(source, echelle) {
       const valeur = parseFloat(nue[1].replace(",", "."));
       const avant  = nettoyerTitre(reste.slice(0, nue.index));
       if (valeur >= 1 && valeur <= echelle && avant.length >= 2) {
-        note  = surDix(valeur, echelle);
+        note  = surEchelle(valeur, echelle);
         reste = avant;
       }
     }
@@ -975,7 +1133,10 @@ function classer(entree) {
 
   entree.choix  = meilleur;
   entree.sur    = Math.max(meilleurSur, 0);
-  entree.garder = !!meilleur && meilleurSur > 0;
+  // Une correspondance douteuse est décochée : mieux vaut une série absente
+  // qu'une série jamais regardée dans la liste. Une absence totale de résultat,
+  // en revanche, part en création manuelle — le titre, lui, est certain.
+  entree.garder = meilleur ? meilleurSur > 0 : true;
 }
 
 async function interrogerLot(titres) {
@@ -1059,6 +1220,8 @@ addEventListener("keydown", (e) => {
 $("import-analyser").addEventListener("click", async () => {
   const echelle = Number($("import-echelle").value) || 10;
 
+  echelleImport = echelleRangee(echelle);
+
   const entrees = $("import-texte").value
     .split("\n").flatMap((l) => analyserLigne(l, echelle));
 
@@ -1138,12 +1301,12 @@ function ligneImport(e) {
   const note = document.createElement("input");
   note.type = "number";
   note.className = "import-note";
-  note.min = 0; note.max = 10; note.step = 1;
+  note.min = 0; note.step = 1;
   note.placeholder = "—";
-  note.setAttribute("aria-label", "Ta note sur 10");
+  note.setAttribute("aria-label", "Ta note");
   note.addEventListener("change", () => {
     const v = Math.round(Number(note.value));
-    e.note = Number.isInteger(v) && v >= 1 && v <= 10 ? v : null;
+    e.note = Number.isInteger(v) && v >= 1 && v <= echelleImport ? v : null;
     note.value = e.note ?? "";
   });
 
@@ -1204,8 +1367,9 @@ function ligneImport(e) {
     ligne.classList.toggle("est-douteuse", trouve && e.sur === 0);
 
     coche.checked  = e.garder;
-    coche.disabled = !trouve;
+    coche.disabled = false;      // même sans jaquette, la série est importable
     note.value     = e.note ?? "";
+    note.max       = echelleImport;
 
     vignette.hidden = !trouve;
     vide.hidden     = trouve;
@@ -1213,11 +1377,13 @@ function ligneImport(e) {
 
     const deja = trouve && listeCache.some((s) => s.id === e.choix.id);
 
-    titre.textContent = trouve ? e.choix.title : "Rien trouvé pour ce titre";
+    titre.textContent = trouve ? e.choix.title : e.titre;
     source.className  = "import-source" + (deja ? " import-deja" : "");
     source.textContent = deja
       ? "Déjà dans ta liste — ta progression sera conservée"
-      : (trouve && e.sur === 0 ? `Correspondance incertaine · ta ligne : ${e.brut}` : `Ta ligne : ${e.brut}`);
+      : !trouve
+        ? "Inconnue d'AniList — créée sans jaquette, modifiable ensuite"
+        : (e.sur === 0 ? `Correspondance incertaine · ta ligne : ${e.brut}` : `Ta ligne : ${e.brut}`);
 
     alt.hidden = !trouve || e.candidats.length < 2;
     if (!alt.hidden) {
@@ -1239,20 +1405,27 @@ function ligneImport(e) {
     bilanImport();
   });
 
-  infos.append(titre, source, alt, relance, boite);
-  ligne.append(coche, vignette, vide, infos, note);
+  /* La ligne est une grille : jaquette à gauche, titre et case en haut, puis
+     la source et les commandes dessous. Sur téléphone, tout tient sans que le
+     titre soit rogné à trois mots. */
+  const outils = document.createElement("div");
+  outils.className = "import-outils";
+  outils.append(note, alt, relance, boite);
+
+  infos.append(titre);
+  ligne.append(coche, vignette, vide, infos, source, outils);
   peindre();
   return ligne;
 }
 
 function bilanImport() {
   const trouvees    = importEntrees.filter((e) => e.choix).length;
-  const cochees     = importEntrees.filter((e) => e.garder && e.choix).length;
+  const cochees     = importEntrees.filter((e) => e.garder).length;
   const douteuses   = importEntrees.filter((e) => e.choix && e.sur === 0).length;
   const introuvable = importEntrees.length - trouvees;
 
   const bouts = [`${cochees} série${cochees > 1 ? "s" : ""} cochée${cochees > 1 ? "s" : ""} sur ${importEntrees.length} lignes lues`];
-  if (introuvable) bouts.push(`${introuvable} sans résultat`);
+  if (introuvable) bouts.push(`${introuvable} créée${introuvable > 1 ? "s" : ""} à la main, sans jaquette`);
   if (douteuses)   bouts.push(`${douteuses} incertaine${douteuses > 1 ? "s" : ""}, décochée${douteuses > 1 ? "s" : ""} par précaution`);
 
   $("import-bilan").textContent =
@@ -1262,10 +1435,10 @@ function bilanImport() {
 }
 
 $("import-tout").addEventListener("click", () => {
-  const cocher = importEntrees.filter((e) => e.garder && e.choix).length === 0;
-  importEntrees.forEach((e) => { e.garder = cocher && !!e.choix; });
+  const cocher = importEntrees.filter((e) => e.garder).length === 0;
+  importEntrees.forEach((e) => { e.garder = cocher; });
   $("import-lignes").querySelectorAll("input[type=checkbox]").forEach((c) => {
-    c.checked = cocher && !c.disabled;
+    c.checked = cocher;
   });
   bilanImport();
 });
@@ -1280,7 +1453,9 @@ $("import-valider").addEventListener("click", async () => {
      lignes différentes peuvent tomber sur le même titre. */
   const vus = new Set();
   const retenues = importEntrees.filter((e) => {
-    if (!e.garder || !e.choix || vus.has(e.choix.id)) return false;
+    if (!e.garder) return false;
+    if (!e.choix) return true;              // création locale : jamais un doublon
+    if (vus.has(e.choix.id)) return false;
     vus.add(e.choix.id);
     return true;
   });
@@ -1297,44 +1472,46 @@ $("import-valider").addEventListener("click", async () => {
   const operations = [];
 
   retenues.forEach((e) => {
-    const m = e.choix;
+    // Sans correspondance AniList, la série est créée telle qu'elle était
+    // écrite : titre seul, sans jaquette, modifiable depuis sa fiche.
+    const m = e.choix || { id: nouvelIdLocal(), title: e.titre, cover: "", episodes: 0 };
     const episodes = Math.min(Math.max(m.episodes || 0, 0), 5000);
-    const dejaSuivie = listeCache.some((s) => s.id === m.id);
+    const dejaSuivie = listeCache.find((s) => s.id === m.id);
 
-    // Une série déjà suivie n'est pas réécrite : sa progression compte plus
-    // que ce que dit le texte collé.
-    if (!dejaSuivie) {
+    const data = {
+      id: m.id,
+      title: m.title.slice(0, 300),
+      cover: (m.cover || "").slice(0, 500),
+      episodes,
+      vus: statut === "termine" ? episodes : 0,
+      statut,
+      addedAt: Date.now()
+    };
+
+    // La note accompagne la série : elle reste personnelle et n'entre dans
+    // aucune moyenne. Une série déjà suivie garde sa progression, mais reçoit
+    // quand même la note du fichier.
+    if (e.note) { data.note = e.note; data.sur = echelleImport; }
+
+    if (dejaSuivie) {
+      if (!e.note) return;
       operations.push({
         ref: doc(db, "users", uid, "animes", m.id),
-        data: {
-          id: m.id,
-          title: m.title.slice(0, 300),
-          cover: (m.cover || "").slice(0, 500),
-          episodes,
-          vus: statut === "termine" ? episodes : 0,
-          statut,
-          addedAt: Date.now()
-        }
+        data: { note: e.note, sur: echelleImport },
+        fusion: true
       });
+      return;
     }
 
-    if (e.note) {
-      operations.push({
-        ref: doc(db, "notes", m.id, "votes", uid),
-        data: { note: e.note, at: Date.now() }
-      });
-    }
+    operations.push({ ref: doc(db, "users", uid, "animes", m.id), data });
   });
 
   try {
     for (let i = 0; i < operations.length; i += OPS) {
       const lot = writeBatch(db);
-      operations.slice(i, i + OPS).forEach((o) => lot.set(o.ref, o.data));
+      operations.slice(i, i + OPS).forEach((o) => lot.set(o.ref, o.data, { merge: !!o.fusion }));
       await lot.commit();
     }
-
-    // Les moyennes affichées ne valent plus : nos votes viennent de s'y ajouter.
-    retenues.forEach((e) => notesCache.delete(e.choix.id));
 
     $("import-screen").hidden = true;
     $("import-texte").value = "";
@@ -1354,7 +1531,6 @@ $("import-valider").addEventListener("click", async () => {
 function ouvrirFiche(a) {
   ficheCourante = a;
   majFiche();
-  afficherNotes(a.id);
   showView("fiche");
 }
 
@@ -1367,7 +1543,8 @@ function majFiche() {
   $("fiche-titre").textContent = a.title;
 
   const bouts = [FORMATS[a.format] || a.format, a.studio,
-                 a.episodes ? `${a.episodes} épisodes` : null, dateDebut(a)];
+                 a.episodes ? `${a.episodes} épisodes` : null,
+                 a.locale ? "Ajoutée par toi" : dateDebut(a)];
   $("fiche-sous").textContent = bouts.filter(Boolean).join(" · ");
 
   $("fiche-genres").innerHTML = a.genres
@@ -1385,6 +1562,9 @@ function majFiche() {
   }
 
   $("fiche-resume").textContent = a.resume || "";
+
+  afficherNotePerso(suivi);
+  $("fiche-modifier").hidden = !(suivi && estLocale(suivi.id));
 
   $("fiche-suivi").hidden   = !suivi;
   $("fiche-danger").hidden  = !suivi;
@@ -1484,99 +1664,99 @@ $("fiche-retirer").addEventListener("click", async () => {
   showView("liste");
 });
 
-/* ══════════════════ Notes ══════════════════
+/* ══════════════════ Notes personnelles ══════════════════
 
-   Un vote par personne, la moyenne calculée par Firestore plutôt que stockée :
-   un compteur cumulé serait impossible à protéger, aucune règle ne pouvant
-   vérifier qu'une somme correspond aux votes réels.
-   ══════════════════════════════════════════ */
+   Les notes vivaient dans une collection publique, et chaque note alimentait
+   une moyenne visible de tous. Elles sont désormais rangées dans la fiche de
+   suivi de chacun : personne d'autre ne les voit, et ta liste n'influence plus
+   ce qu'affiche le site aux autres.
 
-const notesCache = new Map();
-const votesDe = (id) => collection(db, "notes", id, "votes");
+   Effet de bord appréciable : la moyenne demandait une requête d'agrégation
+   par jaquette entrant à l'écran. Avec trois cents séries, faire défiler sa
+   liste déclenchait trois cents requêtes. La note est maintenant déjà là,
+   dans les données de la liste, et ne coûte plus rien.
 
-async function chargerNote(id, forcer = false) {
-  if (!forcer && notesCache.has(id)) return notesCache.get(id);
+   L'échelle est enregistrée avec la note. Un 17 saisi sur 20 se réaffiche
+   « 17/20 », pas « 9/10 » : convertir, c'est perdre la moitié des nuances.
+   ════════════════════════════════════════════════════════ */
 
-  /* La moyenne est publique ; la note personnelle n'existe que si quelqu'un
-     est connecté. On ne demande donc le second document que dans ce cas. */
-  const [agg, mien] = await Promise.all([
-    getAggregateFromServer(votesDe(id), { moyenne: average("note"), nombre: count() }),
-    currentUser ? getDoc(doc(votesDe(id), currentUser.uid)) : Promise.resolve(null)
-  ]);
+const ECHELLES = [10, 20];
 
-  const n = {
-    moyenne: agg.data().moyenne,
-    nombre:  agg.data().nombre,
-    mienne:  mien?.exists() ? mien.data().note : null
-  };
-  notesCache.set(id, n);
-  return n;
-}
+// L'échelle de saisie peut être sur 5 ; on la range sur 10, qui la contient.
+const echelleRangee = (e) => (Number(e) === 20 ? 20 : 10);
 
-const chiffreNote = (v) => v.toFixed(1).replace(".", ",");
+const convertirNote = (valeur, depuis, vers) =>
+  Math.min(vers, Math.max(1, Math.round((valeur / depuis) * vers)));
 
-const texteNote = (n) =>
-  n.moyenne === null ? "Pas encore noté"
-                     : `${chiffreNote(n.moyenne)} / 10 · ${n.nombre} avis`;
+const texteNote = (s) => (s && s.note ? `${s.note}/${s.sur || 10}` : "");
 
-const htmlNote = (n) =>
-  n.moyenne === null
-    ? `<span class="note-vide">Pas encore noté</span>`
-    : `<span class="note-chiffre">${chiffreNote(n.moyenne)}</span>`
-    + `<span class="note-sur">/ 10</span>`
-    + `<span class="note-avis">${n.nombre} avis</span>`;
+/* Dernière échelle utilisée, retenue le temps de la session : qui note sur 20
+   note sur 20 pour toutes ses séries, et n'a pas à le redire à chaque fiche. */
+let echellePreferee = 20;
 
-async function afficherNotes(id) {
-  $("fiche-note").innerHTML = `<span class="note-vide">Chargement…</span>`;
-  try {
-    const n = await chargerNote(id);
-    if (ficheCourante?.id !== id) return;   // la personne a changé de fiche
-    $("fiche-note").innerHTML = htmlNote(n);
-    grilleNotes(n, id);
-  } catch (err) {
-    console.error("Notes :", err.code, err.message);
-    $("fiche-note").innerHTML = `<span class="note-vide">Notes indisponibles.</span>`;
-  }
-}
+function afficherNotePerso(suivi) {
+  const bloc = $("fiche-note-bloc");
+  bloc.hidden = !suivi;
+  if (!suivi) return;
 
-function grilleNotes(n, id) {
+  const sur = suivi.sur || echellePreferee;
+
+  $("fiche-note").textContent = suivi.note
+    ? `${suivi.note} sur ${sur}`
+    : "Pas encore notée";
+
+  document.querySelectorAll(".echelle").forEach((b) =>
+    b.classList.toggle("is-active", Number(b.dataset.sur) === sur));
+
   const zone = $("fiche-notes");
   zone.innerHTML = "";
 
-  for (let i = 1; i <= 10; i++) {
-    const atteint = n.mienne !== null && i <= n.mienne;
+  for (let i = 1; i <= sur; i++) {
+    const atteint = suivi.note && i <= suivi.note;
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "note-btn" + (atteint ? " is-atteint" : "") + (n.mienne === i ? " is-active" : "");
+    b.className = "note-btn" + (atteint ? " is-atteint" : "") + (suivi.note === i ? " is-active" : "");
     b.textContent = i;
-    b.setAttribute("aria-pressed", n.mienne === i);
-    b.addEventListener("click", () => noter(id, n.mienne === i ? null : i));
+    b.setAttribute("aria-pressed", String(suivi.note === i));
+    // Recliquer sur sa propre note l'efface : c'est le seul moyen de revenir
+    // à « pas notée » sans inventer un bouton de plus.
+    b.addEventListener("click", () => noter(suivi.id, suivi.note === i ? null : i, sur));
     zone.appendChild(b);
   }
 
   const info = document.createElement("span");
   info.className = "note-mienne";
-  info.textContent = n.mienne
-    ? `Ta note : ${n.mienne} sur 10 — clique à nouveau dessus pour la retirer`
-    : "Tu n'as pas encore noté cette série";
+  info.textContent = suivi.note
+    ? "Clique à nouveau sur ta note pour l'effacer"
+    : "Personne d'autre ne voit tes notes";
   zone.appendChild(info);
 }
 
-async function noter(id, valeur) {
-  if (!currentUser) return ouvrirConnexion("Crée un compte pour noter les séries.");
+async function noter(id, valeur, sur) {
+  if (!currentUser) return;
+  echellePreferee = sur;
   try {
-    const ref = doc(votesDe(id), currentUser.uid);
-    if (valeur === null) await deleteDoc(ref);
-    else await setDoc(ref, { note: valeur, at: Date.now() });
-
-    await chargerNote(id, true);
-    if (ficheCourante?.id === id) afficherNotes(id);
-    toast(valeur === null ? "Note retirée." : `Noté ${valeur} sur 10.`);
+    await majSuivi(id, valeur === null
+      ? { note: deleteField(), sur: deleteField() }
+      : { note: valeur, sur });
   } catch (err) {
     console.error("Note :", err.code, err.message);
     toast("La note n'a pas pu être enregistrée.");
   }
 }
+
+/* Changer d'échelle reporte la note au prorata : 17/20 devient 9/10. La
+   conversion perd de la finesse dans ce sens, jamais dans l'autre. */
+document.querySelectorAll(".echelle").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const s = listeCache.find((x) => x.id === ficheCourante?.id);
+    if (!s) return;
+    const sur = Number(btn.dataset.sur);
+    echellePreferee = sur;
+    if (!s.note) { afficherNotePerso({ ...s, sur }); return; }
+    await majSuivi(s.id, { note: convertirNote(s.note, s.sur || 10, sur), sur });
+  });
+});
 
 /* ══════════════════ Fond réactif ══════════════════ */
 

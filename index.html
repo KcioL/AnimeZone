@@ -162,6 +162,71 @@
     </div>
   </div>
 
+  <!-- ══ Ajout ou modification d'une série ══ -->
+  <div id="serie-screen" class="import-screen" hidden role="dialog" aria-modal="true" aria-label="Ajouter une série">
+    <div class="import-box serie-box">
+      <button type="button" id="serie-fermer" class="auth-fermer" aria-label="Fermer">×</button>
+      <p class="auth-titre" id="serie-titre-fenetre">Ajouter une série</p>
+
+      <div class="serie-corps">
+        <div class="serie-image">
+          <img id="serie-apercu" class="serie-apercu" alt="" hidden>
+          <span id="serie-sans-image" class="serie-sans-image">Aucune image</span>
+          <label for="serie-fichier" class="btn-ghost serie-parcourir">Choisir une image</label>
+          <input type="file" id="serie-fichier" accept="image/*" class="visually-hidden">
+          <button type="button" id="serie-retirer-image" class="btn-link" hidden>Retirer l'image</button>
+        </div>
+
+        <div class="serie-champs">
+          <div class="field">
+            <label for="serie-nom">Titre</label>
+            <input type="text" id="serie-nom" maxlength="300" autocomplete="off">
+          </div>
+
+          <div class="serie-duo">
+            <div class="field">
+              <label for="serie-episodes">Épisodes au total</label>
+              <input type="number" id="serie-episodes" min="0" max="5000" placeholder="0 si inconnu">
+            </div>
+            <div class="field">
+              <label for="serie-vus">Épisodes vus</label>
+              <input type="number" id="serie-vus" min="0" max="5000" value="0">
+            </div>
+          </div>
+
+          <div class="serie-duo">
+            <div class="field">
+              <label for="serie-statut">Statut</label>
+              <select id="serie-statut">
+                <option value="termine">Terminé</option>
+                <option value="en_cours">En cours</option>
+                <option value="a_voir">À voir</option>
+                <option value="abandonne">Abandonné</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="serie-note">Ta note</label>
+              <div class="serie-note-ligne">
+                <input type="number" id="serie-note" min="1" max="20" placeholder="—">
+                <select id="serie-sur" aria-label="Échelle de la note">
+                  <option value="20">sur 20</option>
+                  <option value="10">sur 10</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <p id="serie-erreur" class="form-error" role="alert" hidden></p>
+        </div>
+      </div>
+
+      <div class="import-pied">
+        <button type="button" id="serie-annuler" class="btn-link">Annuler</button>
+        <button type="button" id="serie-valider" class="btn-primary">Ajouter à ma liste</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ══ Application ══ -->
   <div id="app-screen" hidden>
     <header class="topbar">
@@ -241,6 +306,7 @@
 
         <div id="liste-contenu">
         <div class="liste-outils">
+          <button type="button" id="ouvrir-serie" class="btn-ghost">Ajouter une série</button>
           <button type="button" id="ouvrir-import" class="btn-ghost">Importer une liste</button>
         </div>
 
@@ -296,12 +362,19 @@
             </div>
 
             <button type="button" id="fiche-ajouter" class="btn-primary" hidden>Ajouter à ma liste</button>
+            <button type="button" id="fiche-modifier" class="btn-ghost" hidden>Modifier cette série</button>
           </div>
         </div>
 
-        <div class="note-bloc">
-          <p class="note-ligne" id="fiche-note">Chargement des notes…</p>
-          <p class="note-libelle">Ta note</p>
+        <div class="note-bloc" id="fiche-note-bloc" hidden>
+          <div class="note-tete">
+            <p class="note-libelle">Ta note — personnelle, visible de toi seul</p>
+            <div class="note-echelle" role="group" aria-label="Échelle">
+              <button type="button" class="echelle" data-sur="10">sur 10</button>
+              <button type="button" class="echelle" data-sur="20">sur 20</button>
+            </div>
+          </div>
+          <p class="note-ligne" id="fiche-note"></p>
           <div class="note-choix" id="fiche-notes" role="group" aria-label="Noter cette série"></div>
         </div>
 
