@@ -58,7 +58,7 @@ const CHAMPS = `
    L'import enchaîne les requêtes : sans cette attente, une liste un peu
    longue s'arrêterait en plein milieu. */
 async function anilist(query, variables = {}, options = {}) {
-  const { essais = 2, onAttente = null } = options;
+  const { essais = 3, onAttente = null } = options;
 
   const res = await fetch(ANILIST, {
     method: "POST",
@@ -75,7 +75,14 @@ async function anilist(query, variables = {}, options = {}) {
 
   if (!res.ok) throw new Error(`AniList a répondu ${res.status}`);
   const json = await res.json();
-  if (json.errors?.length) throw new Error(json.errors[0].message);
+
+  /* Une requête groupée pose douze questions à la fois. Si l'une d'elles
+     déplaît au serveur, AniList renvoie l'erreur *et* les onze réponses
+     valides. Rejeter le tout perdait onze séries pour une. */
+  if (json.errors?.length) {
+    if (!json.data) throw new Error(json.errors[0].message);
+    console.warn("AniList, réponse partielle :", json.errors[0].message);
+  }
   return json.data;
 }
 
@@ -624,6 +631,17 @@ async function lancerRecherche(terme) {
 
 /* ══════════════════ Cartes ══════════════════ */
 
+/* Une série saisie à la main n'a pas toujours d'image. Un <img src=""> fait
+   afficher au navigateur son icône d'image cassée : on met un carré aux
+   initiales à la place, qui a au moins l'air voulu. */
+const initiales = (titre) => String(titre || "?")
+  .split(/\s+/).filter(Boolean).slice(0, 2)
+  .map((m) => m[0]).join("").toUpperCase() || "?";
+
+const jaquette = (url, titre) => url
+  ? `<img src="${url}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+  : `<span class="carte-sans-image">${escapeHtml(initiales(titre))}</span>`;
+
 function carte(a, genre) {
   const suivi = listeCache.find((s) => s.id === a.id);
 
@@ -642,7 +660,7 @@ function carte(a, genre) {
   el.dataset.anime = a.id;
   el.innerHTML = `
     <span class="carte-img">
-      <img src="${a.cover}" alt="" loading="lazy" referrerpolicy="no-referrer">
+      ${jaquette(a.cover, a.title)}
       ${genre === "avenir" ? `<span class="carte-hype">${nombreCourt(a.hype)} en attente</span>` : ""}
       ${suivi ? `<span class="carte-suivi">Suivi</span>` : ""}
       ${bandeau ? `<span class="carte-bandeau">${escapeHtml(bandeau)}</span>` : ""}
@@ -716,7 +734,7 @@ function afficherListe() {
     const pct = s.episodes ? Math.round((s.vus / s.episodes) * 100) : 0;
     el.innerHTML = `
       <span class="carte-img">
-        <img src="${s.cover}" alt="" loading="lazy" referrerpolicy="no-referrer">
+        ${jaquette(s.cover, s.title)}
         ${estTermine(s) ? `<span class="carte-suivi">Terminé</span>` : ""}
         <span class="carte-bandeau">${s.vus} / ${s.episodes || "?"} épisodes${s.episodes ? ` · ${pct} %` : ""}</span>
       </span>
@@ -946,6 +964,7 @@ $("serie-valider").addEventListener("click", async () => {
 
 let importEntrees = [];
 let importOccupe  = false;
+let importEchecs  = 0;
 
 /* Réduit un titre à sa forme comparable : sans casse, sans accents, sans
    ponctuation. « Re:ZERO -Starting Life- » et « Re Zero Starting Life »
@@ -1151,16 +1170,44 @@ async function interrogerLot(titres) {
   return titres.map((_, i) => (data[`r${i}`]?.media || []).map(simplifier));
 }
 
+/* Trois cents lignes, c'est une trentaine d'allers-retours réseau. Sur un
+   téléphone qui change d'antenne, ou face à une coupure de rythme d'AniList,
+   il y en aura un qui échouera — et faire échouer l'import entier pour lui
+   revenait à jeter vingt-cinq requêtes réussies. Chaque paquet est donc isolé :
+   il retente une fois, puis abandonne seul. Les lignes concernées ressortent
+   simplement comme non trouvées, donc créées à la main, donc pas perdues. */
 async function chercherLot(entrees, avancement) {
+  let echecs = 0;
+
+  async function traiter(paquet, titres) {
+    for (let tentative = 0; tentative < 2; tentative++) {
+      try {
+        return await interrogerLot(titres);
+      } catch (err) {
+        console.warn("Paquet en échec :", err.message);
+        if (tentative === 0) {
+          $("import-etat").textContent = "Connexion difficile, nouvelle tentative…";
+          await pause(4000);
+        }
+      }
+    }
+    echecs += paquet.length;
+    $("import-etat").textContent = "Recherche des séries sur AniList…";
+    return null;
+  }
+
   for (let i = 0; i < entrees.length; i += LOT) {
     const paquet = entrees.slice(i, i + LOT);
-    const reponses = await interrogerLot(paquet.map((e) => e.titre));
+    const reponses = await traiter(paquet, paquet.map((e) => e.titre));
 
-    paquet.forEach((e, j) => { e.candidats = reponses[j]; classer(e); });
+    if (reponses) paquet.forEach((e, j) => { e.candidats = reponses[j]; classer(e); });
+    else paquet.forEach((e) => { e.echec = true; e.candidats = []; classer(e); });
 
     avancement(Math.min(i + LOT, entrees.length));
     if (i + LOT < entrees.length) await pause(2000);
   }
+
+  importEchecs = echecs;
 
   /* Seconde chance : les titres restés bredouilles repartent sous une forme
      raccourcie. « saekano/how to raise a boring girlfriend » ne donne rien,
@@ -1172,7 +1219,8 @@ async function chercherLot(entrees, avancement) {
   for (let i = 0; i < bredouilles.length; i += LOT) {
     const paquet = bredouilles.slice(i, i + LOT);
     $("import-etat").textContent = "Nouvel essai sur les titres non trouvés…";
-    const reponses = await interrogerLot(paquet.map((x) => x.autre));
+    const reponses = await traiter(paquet, paquet.map((x) => x.autre));
+    if (!reponses) continue;
 
     paquet.forEach((x, j) => {
       if (!reponses[j].length) return;
@@ -1221,6 +1269,7 @@ $("import-analyser").addEventListener("click", async () => {
   const echelle = Number($("import-echelle").value) || 10;
 
   echelleImport = echelleRangee(echelle);
+  importEchecs  = 0;
 
   const entrees = $("import-texte").value
     .split("\n").flatMap((l) => analyserLigne(l, echelle));
@@ -1238,9 +1287,12 @@ $("import-analyser").addEventListener("click", async () => {
     afficherResultatsImport();
     etapeImport("resultats");
   } catch (err) {
+    /* On arrive ici pour une panne franche — plus de réseau du tout. Le texte
+       collé reste intact dans le champ, il n'y a rien à retaper. */
     console.error("Import :", err);
     etapeImport("saisie");
-    toast(`Recherche impossible : ${err.message}`);
+    $("import-etat").textContent = "Recherche des séries sur AniList…";
+    toast(`Recherche interrompue : ${err.message}. Ton texte est intact, réessaie.`);
   } finally {
     importOccupe = false;
   }
@@ -1381,6 +1433,8 @@ function ligneImport(e) {
     source.className  = "import-source" + (deja ? " import-deja" : "");
     source.textContent = deja
       ? "Déjà dans ta liste — ta progression sera conservée"
+      : e.echec
+        ? "Recherche impossible — créée sans jaquette, modifiable ensuite"
       : !trouve
         ? "Inconnue d'AniList — créée sans jaquette, modifiable ensuite"
         : (e.sur === 0 ? `Correspondance incertaine · ta ligne : ${e.brut}` : `Ta ligne : ${e.brut}`);
@@ -1426,6 +1480,7 @@ function bilanImport() {
 
   const bouts = [`${cochees} série${cochees > 1 ? "s" : ""} cochée${cochees > 1 ? "s" : ""} sur ${importEntrees.length} lignes lues`];
   if (introuvable) bouts.push(`${introuvable} créée${introuvable > 1 ? "s" : ""} à la main, sans jaquette`);
+  if (importEchecs) bouts.push(`${importEchecs} non vérifiée${importEchecs > 1 ? "s" : ""} faute de réseau`);
   if (douteuses)   bouts.push(`${douteuses} incertaine${douteuses > 1 ? "s" : ""}, décochée${douteuses > 1 ? "s" : ""} par précaution`);
 
   $("import-bilan").textContent =
@@ -1554,7 +1609,10 @@ function majFiche() {
   if (!a) return;
   const suivi = listeCache.find((s) => s.id === a.id);
 
-  $("fiche-cover").src = a.cover || "";
+  $("fiche-cover").hidden = !a.cover;
+  $("fiche-cover-vide").hidden = !!a.cover;
+  if (a.cover) $("fiche-cover").src = a.cover;
+  else $("fiche-cover-vide").textContent = initiales(a.title);
   $("fiche-titre").textContent = a.title;
 
   const bouts = [FORMATS[a.format] || a.format, a.studio,
