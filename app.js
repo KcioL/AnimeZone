@@ -1451,12 +1451,20 @@ $("import-valider").addEventListener("click", async () => {
 
   /* Une même série peut apparaître deux fois dans le texte collé, ou deux
      lignes différentes peuvent tomber sur le même titre. */
+  /* Repasser deux fois la même liste ne doit rien dupliquer. Une série
+     reconnue se reconnaît à son identifiant AniList ; une série créée à la
+     main n'en a pas, on la rapproche donc par son titre normalisé — c'est le
+     seul point commun entre deux imports du même fichier. */
+  const localesExistantes = new Map(
+    listeCache.filter((s) => estLocale(s.id)).map((s) => [cleTitre(s.title), s.id])
+  );
+
   const vus = new Set();
   const retenues = importEntrees.filter((e) => {
     if (!e.garder) return false;
-    if (!e.choix) return true;              // création locale : jamais un doublon
-    if (vus.has(e.choix.id)) return false;
-    vus.add(e.choix.id);
+    const cle = e.choix ? e.choix.id : "titre:" + cleTitre(e.titre);
+    if (vus.has(cle)) return false;
+    vus.add(cle);
     return true;
   });
 
@@ -1472,9 +1480,16 @@ $("import-valider").addEventListener("click", async () => {
   const operations = [];
 
   retenues.forEach((e) => {
-    // Sans correspondance AniList, la série est créée telle qu'elle était
-    // écrite : titre seul, sans jaquette, modifiable depuis sa fiche.
-    const m = e.choix || { id: nouvelIdLocal(), title: e.titre, cover: "", episodes: 0 };
+    /* Sans correspondance AniList, la série est créée telle qu'elle était
+       écrite : titre seul, sans jaquette, modifiable depuis sa fiche. Si un
+       import précédent l'a déjà créée, on reprend son identifiant au lieu
+       d'en fabriquer un second. */
+    const cleLocale = cleTitre(e.titre);
+    const m = e.choix || {
+      id: localesExistantes.get(cleLocale) || nouvelIdLocal(),
+      title: e.titre, cover: "", episodes: 0
+    };
+    if (!e.choix) localesExistantes.set(cleLocale, m.id);
     const episodes = Math.min(Math.max(m.episodes || 0, 0), 5000);
     const dejaSuivie = listeCache.find((s) => s.id === m.id);
 
