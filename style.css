@@ -833,13 +833,32 @@ button, input { font: inherit; color: inherit; }
      moitié de la place. À cette largeur, elle devient l'écran entier. */
   .import-screen { padding: 0; place-items: stretch; }
 
+  /* Hauteur fixée à l'écran, jamais davantage : la boîte grandissait avec son
+     contenu et poussait le pied — donc « Annuler » — hors de portée. Seul le
+     corps défile désormais ; le titre, la croix et les boutons restent en
+     place quoi qu'il arrive. */
   .import-box {
     max-width: none; width: 100%; margin: 0;
-    min-height: 100vh; min-height: 100dvh;
+    height: 100vh; height: 100dvh; max-height: 100dvh;
+    overflow: hidden;
     border: none; border-radius: 0;
     display: flex; flex-direction: column;
     padding: calc(20px + env(safe-area-inset-top, 0px)) 14px
              calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* La croix se plaçait à 12 px du haut de la boîte, qui commence au ras de
+     l'écran : sur un téléphone à encoche, elle finissait sous la barre d'état,
+     hors d'atteinte. Et 34 px est une cible trop petite pour un pouce. */
+  .import-box .auth-fermer {
+    top: calc(6px + env(safe-area-inset-top, 0px)); right: 8px;
+    width: 44px; height: 44px;
+  }
+  .auth-titre { padding-right: 48px; }
+
+  #import-saisie, .serie-corps {
+    flex: 1 1 auto; min-height: 0;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
   }
 
   #import-resultats { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -858,13 +877,15 @@ button, input { font: inherit; color: inherit; }
   .import-note { width: 58px; }
   .import-alt { flex-basis: 100%; }
 
-  /* Le pied ne défile pas avec la liste : la validation reste sous le pouce. */
+  /* Le pied est hors de la zone qui défile : la validation et l'annulation
+     restent sous le pouce en permanence. */
   .import-pied {
-    justify-content: space-between;
-    position: sticky; bottom: 0;
+    justify-content: space-between; align-items: center;
+    flex-shrink: 0;
     margin: 0 -14px; padding: 12px 14px 0;
     background: var(--surface); border-top: 1px solid var(--line);
   }
+  .import-pied .btn-link { padding: 10px 4px; }
 
   /* Deux menus côte à côte à 380 px se réduisent à des fentes ; ils passent
      l'un sous l'autre, et le bouton d'action occupe toute la largeur au lieu

@@ -151,11 +151,20 @@ async function chercher(terme) {
   return d.Page.media.map(normaliser);
 }
 
+/* Rouvrir la même fiche dans la session ne redemande rien : une série ne
+   change pas de résumé en dix minutes. */
+const ficheCache = new Map();
+
 async function parIdentifiant(id) {
+  if (ficheCache.has(id)) return ficheCache.get(id);
+
   const d = await anilist(
     `query ($id: Int) { Media(id: $id, type: ANIME) { ${CHAMPS} } }`,
     { id: Number(id) });
-  return normaliser(d.Media);
+
+  const a = normaliser(d.Media);
+  ficheCache.set(id, a);
+  return a;
 }
 
 /* ══════════════════ Mise en forme ══════════════════ */
@@ -688,9 +697,25 @@ document.addEventListener("click", async (ev) => {
 
   const suivi = el.__suivi;
   if (suivi) {
-    if (estLocale(suivi.id)) return ouvrirFiche(depuisSuivi(suivi));
-    try { ouvrirFiche(await parIdentifiant(suivi.id)); }
-    catch { ouvrirFiche(depuisSuivi(suivi)); }   // hors ligne : on affiche ce qu'on a
+    /* On ouvre immédiatement avec ce que la liste contient déjà — titre,
+       jaquette, progression, note. Attendre la réponse d'AniList avant
+       d'afficher quoi que ce soit laissait l'écran figé une seconde ou deux,
+       le temps d'un aller-retour réseau, sans que rien n'indique qu'il se
+       passait quelque chose.
+
+       Le résumé, les genres et le studio arrivent ensuite et complètent la
+       fiche sur place. Si entre-temps tu es reparti ailleurs, la réponse est
+       ignorée : elle ne doit pas écraser la fiche que tu regardes. */
+    ouvrirFiche(depuisSuivi(suivi));
+    if (estLocale(suivi.id)) return;
+
+    $("fiche-resume").textContent = "Chargement des détails…";
+    try {
+      const complet = await parIdentifiant(suivi.id);
+      if (ficheCourante?.id === suivi.id) { ficheCourante = complet; majFiche(); }
+    } catch {
+      if (ficheCourante?.id === suivi.id) $("fiche-resume").textContent = "";
+    }
     return;
   }
   if (el.__anime) ouvrirFiche(el.__anime);
