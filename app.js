@@ -5,7 +5,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, getDoc, setDoc, deleteDoc, updateDoc,
+  collection, doc, getDoc, setDoc, deleteDoc, updateDoc, writeBatch,
   onSnapshot, query, orderBy,
   getAggregateFromServer, average, count
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -55,12 +55,25 @@ const CHAMPS = `
   studios(isMain: true) { nodes { name } }
 `;
 
-async function anilist(query, variables = {}) {
+/* AniList limite le rythme des appels et répond 429 quand on le dépasse.
+   L'import enchaîne les requêtes : sans cette attente, une liste un peu
+   longue s'arrêterait en plein milieu. */
+async function anilist(query, variables = {}, options = {}) {
+  const { essais = 2, onAttente = null } = options;
+
   const res = await fetch(ANILIST, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Accept": "application/json" },
     body: JSON.stringify({ query, variables })
   });
+
+  if (res.status === 429 && essais > 0) {
+    const secondes = Math.min(Number(res.headers.get("Retry-After")) || 60, 65);
+    onAttente?.(secondes);
+    await pause(secondes * 1000);
+    return anilist(query, variables, { ...options, essais: essais - 1 });
+  }
+
   if (!res.ok) throw new Error(`AniList a répondu ${res.status}`);
   const json = await res.json();
   if (json.errors?.length) throw new Error(json.errors[0].message);
@@ -690,6 +703,576 @@ function rafraichirCartes() {
   });
 }
 
+/* ══════════════════ Import d'une liste ══════════════════
+
+   Beaucoup de gens tiennent déjà leur liste ailleurs : les notes du
+   téléphone, un carnet, un tableur. Retaper trois cents titres un par un
+   n'aurait aucun sens. On colle le texte, le site cherche chaque titre sur
+   AniList, on vérifie ce qu'il a reconnu, et tout part d'un coup.
+
+   L'étape de vérification n'est pas une politesse : une recherche par
+   titre approximatif se trompe forcément quelques fois, et personne ne veut
+   découvrir après coup vingt séries qu'il n'a jamais regardées dans sa liste.
+   ════════════════════════════════════════════════════════ */
+
+let importEntrees = [];
+let importOccupe  = false;
+
+/* Réduit un titre à sa forme comparable : sans casse, sans accents, sans
+   ponctuation. « Re:ZERO -Starting Life- » et « Re Zero Starting Life »
+   deviennent alors la même chaîne. */
+const cleTitre = (s) => String(s || "")
+  .toLowerCase()
+  .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .replace(/[^a-z0-9]+/g, " ")
+  .trim();
+
+const surDix = (valeur, max) =>
+  (!Number.isFinite(valeur) || !max)
+    ? null
+    : Math.min(10, Math.max(1, Math.round((valeur / max) * 10)));
+
+/* Une liste tenue dans les notes du téléphone est pleine d'annotations
+   personnelles : « (attente saison 2) », « (ost : sparkle) », « arrêt épisode
+   7 ». Elles arrivent aussi bien avant qu'après la note, et n'ont rien à faire
+   dans une recherche. Tout ce qui est entre parenthèses part donc au panier. */
+function nettoyerTitre(t) {
+  return String(t)
+    .replace(/\([^)]*\)?/g, " ")          // commentaires, même parenthèse jamais refermée
+    .replace(/\[[^\]]*\]?/g, " ")
+    .replace(/[.\u2026]{2,}/g, " ")       // « ... » et « … » de troncature
+    .replace(/\u2026/g, " ")
+    .replace(/^[\s\-\u2013\u2014•*·>+]+/, "")
+    .replace(/^\d{1,3}\s*[.)]\s+/, "")    // numérotation « 12. »
+    .replace(/[\s\-\u2013\u2014:;,|.\/)\]]+$/, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+// Un titre doit contenir des lettres : « 3) » ou « 2020 » sont des résidus.
+const aDuTexte = (t) => /[a-zA-Z\u00C0-\u024F]{2}/.test(t);
+
+const creerEntree = (titre, note, brut) =>
+  ({ titre, note, brut: brut.trim(), garder: true, candidats: [], choix: null, sur: 0 });
+
+/* Une note écrite « 18/20 » est reconnaissable n'importe où dans la ligne :
+   son dénominateur ne laisse aucun doute. C'est ce qui permet de récupérer
+   « sword art online 20/20 (suite 12 octobre) », où la note est au milieu. */
+const RE_FRACTION = /(\d{1,3}(?:[.,]\d+)?)\s*\/\s*(\d{1,3})/g;
+
+function analyserLigne(ligne, echelle) {
+  const source = String(ligne).trim();
+  if (!source) return [];
+
+  const fractions = [...source.matchAll(RE_FRACTION)]
+    .filter((m) => Number(m[2]) >= 3 && Number(m[2]) <= 100);
+
+  if (!fractions.length) {
+    const seule = sansFraction(source, echelle);
+    return seule ? [seule] : [];
+  }
+
+  /* Deux notes sur une ligne, c'est deux séries qu'un retour à la ligne
+     manquant a collées ensemble. Chaque note ferme le titre qui la précède. */
+  const entrees = [];
+  let debut = 0;
+
+  fractions.forEach((m) => {
+    const titre = nettoyerTitre(source.slice(debut, m.index));
+    debut = m.index + m[0].length;
+    if (!titre || !aDuTexte(titre)) return;
+    entrees.push(creerEntree(
+      titre,
+      surDix(parseFloat(m[1].replace(",", ".")), Number(m[2])),
+      source
+    ));
+  });
+
+  return entrees;
+}
+
+/* Sans dénominateur, le piège ce sont les titres qui finissent par un
+   chiffre : « Steins;Gate 0 », « Mob Psycho 100 », « 86 ». D'où les
+   garde-fous — séparateur obligatoire, note dans l'échelle choisie, et titre
+   restant non vide. */
+function sansFraction(source, echelle) {
+  let reste = source;
+  let note = null;
+
+  // « Naruto (8) » : une parenthèse qui ne contient qu'un nombre est une note.
+  const entreParentheses = source.match(/[(\[](\d{1,2}(?:[.,]\d+)?)[)\]]\s*$/);
+
+  if (entreParentheses) {
+    const valeur = parseFloat(entreParentheses[1].replace(",", "."));
+    if (valeur >= 1 && valeur <= echelle) {
+      note  = surDix(valeur, echelle);
+      reste = source.slice(0, entreParentheses.index);
+    }
+  } else {
+    reste = source.replace(/\([^)]*\)?/g, " ").replace(/\[[^\]]*\]?/g, " ");
+    const nue = reste.match(/[-\s:;=|\u2013\u2014]\s*(\d{1,2}(?:[.,]\d+)?)\s*$/);
+    if (nue) {
+      const valeur = parseFloat(nue[1].replace(",", "."));
+      const avant  = nettoyerTitre(reste.slice(0, nue.index));
+      if (valeur >= 1 && valeur <= echelle && avant.length >= 2) {
+        note  = surDix(valeur, echelle);
+        reste = avant;
+      }
+    }
+  }
+
+  const titre = nettoyerTitre(reste);
+  return titre && aDuTexte(titre) ? creerEntree(titre, note, source) : null;
+}
+
+/* Deuxième chance pour les titres restés sans résultat. « saekano/how to
+   raise a boring girlfriend » ou « hell mode : the hardcore gamer » sont deux
+   titres accolés : le premier morceau suffit presque toujours. */
+function variante(titre) {
+  const coupe = titre.split(/\s*[\/:|]\s*/)[0].trim();
+  if (coupe.length >= 3 && coupe !== titre) return coupe;
+
+  const mots = titre.split(/\s+/);
+  if (mots.length > 4) return mots.slice(0, 4).join(" ");
+  return null;
+}
+
+/* Champs réduits au strict nécessaire : la vérification n'affiche qu'une
+   vignette et un titre, et une requête groupée en demande quarante d'un coup. */
+const CHAMPS_IMPORT = `
+  id
+  title { romaji english native }
+  synonyms
+  coverImage { large }
+  episodes
+  format
+  seasonYear
+`;
+
+/* Une requête par titre serait interminable et se ferait limiter par AniList.
+   GraphQL permet d'aliaser plusieurs recherches dans un même appel : douze
+   titres partent ensemble, ce qui ramène une liste de trois cents séries à
+   une trentaine d'appels. */
+const LOT = 12;
+
+function requeteLot(titres) {
+  const variables = titres.map((_, i) => `$q${i}: String`).join(", ");
+  const blocs = titres.map((_, i) => `
+    r${i}: Page(perPage: 4) {
+      media(type: ANIME, search: $q${i}, isAdult: false) { ${CHAMPS_IMPORT} }
+    }`).join("");
+  return `query (${variables}) { ${blocs} }`;
+}
+
+const simplifier = (m) => ({
+  id:       String(m.id),
+  title:    m.title?.english || m.title?.romaji || "Sans titre",
+  cover:    m.coverImage?.large || "",
+  episodes: m.episodes || 0,
+  format:   m.format || "",
+  annee:    m.seasonYear || null,
+  noms:     [m.title?.romaji, m.title?.english, m.title?.native, ...(m.synonyms || [])]
+              .filter(Boolean).map(cleTitre)
+});
+
+/* Combien on peut faire confiance à un résultat. Zéro veut dire qu'aucun des
+   noms de la série ne ressemble à ce qui était écrit : c'est le cas des
+   titres en français, qu'AniList ne connaît pas. Ces lignes-là arrivent
+   décochées, pour qu'une série jamais regardée n'entre pas dans la liste. */
+function confiance(media, cle) {
+  if (media.noms.includes(cle)) return 3;
+  if (media.noms.some((n) => n.startsWith(cle) || cle.startsWith(n))) return 2;
+  if (media.noms.some((n) => n.includes(cle) || cle.includes(n))) return 1;
+  return 0;
+}
+
+function classer(entree) {
+  const cle = cleTitre(entree.titre);
+  let meilleur = null, meilleurSur = -1;
+
+  // À score égal on garde l'ordre d'AniList : sa pertinence vaut mieux qu'un
+  // départage arbitraire de notre part.
+  entree.candidats.forEach((c) => {
+    const s = confiance(c, cle);
+    if (s > meilleurSur) { meilleur = c; meilleurSur = s; }
+  });
+
+  entree.choix  = meilleur;
+  entree.sur    = Math.max(meilleurSur, 0);
+  entree.garder = !!meilleur && meilleurSur > 0;
+}
+
+async function interrogerLot(titres) {
+  const variables = Object.fromEntries(titres.map((t, i) => [`q${i}`, t]));
+  const data = await anilist(requeteLot(titres), variables, {
+    onAttente: (s) => {
+      $("import-etat").textContent =
+        `AniList limite le rythme des recherches. Reprise dans ${s} secondes…`;
+    }
+  });
+  $("import-etat").textContent = "Recherche des séries sur AniList…";
+  return titres.map((_, i) => (data[`r${i}`]?.media || []).map(simplifier));
+}
+
+async function chercherLot(entrees, avancement) {
+  for (let i = 0; i < entrees.length; i += LOT) {
+    const paquet = entrees.slice(i, i + LOT);
+    const reponses = await interrogerLot(paquet.map((e) => e.titre));
+
+    paquet.forEach((e, j) => { e.candidats = reponses[j]; classer(e); });
+
+    avancement(Math.min(i + LOT, entrees.length));
+    if (i + LOT < entrees.length) await pause(2000);
+  }
+
+  /* Seconde chance : les titres restés bredouilles repartent sous une forme
+     raccourcie. « saekano/how to raise a boring girlfriend » ne donne rien,
+     « saekano » donne la bonne série. */
+  const bredouilles = entrees
+    .map((e) => ({ e, autre: e.candidats.length ? null : variante(e.titre) }))
+    .filter((x) => x.autre);
+
+  for (let i = 0; i < bredouilles.length; i += LOT) {
+    const paquet = bredouilles.slice(i, i + LOT);
+    $("import-etat").textContent = "Nouvel essai sur les titres non trouvés…";
+    const reponses = await interrogerLot(paquet.map((x) => x.autre));
+
+    paquet.forEach((x, j) => {
+      if (!reponses[j].length) return;
+      x.e.candidats = reponses[j];
+      classer(x.e);
+    });
+
+    if (i + LOT < bredouilles.length) await pause(2000);
+  }
+}
+
+/* ── Fenêtre ── */
+
+function etapeImport(nom) {
+  $("import-saisie").hidden    = nom !== "saisie";
+  $("import-analyse").hidden   = nom !== "analyse";
+  $("import-resultats").hidden = nom !== "resultats";
+}
+
+function ouvrirImport() {
+  if (!currentUser) return ouvrirConnexion("Crée un compte pour importer ta liste.");
+  $("import-screen").hidden = false;
+  etapeImport("saisie");
+  setTimeout(() => $("import-texte").focus(), 100);
+}
+
+function fermerImport() {
+  if (importOccupe) return;   // une écriture en cours ne se referme pas à moitié
+  $("import-screen").hidden = true;
+}
+
+$("ouvrir-import").addEventListener("click", ouvrirImport);
+$("import-fermer").addEventListener("click", fermerImport);
+$("import-annuler").addEventListener("click", fermerImport);
+$("import-retour").addEventListener("click", () => etapeImport("saisie"));
+
+$("import-screen").addEventListener("click", (e) => {
+  if (e.target === $("import-screen")) fermerImport();
+});
+
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("import-screen").hidden) fermerImport();
+});
+
+$("import-analyser").addEventListener("click", async () => {
+  const echelle = Number($("import-echelle").value) || 10;
+
+  const entrees = $("import-texte").value
+    .split("\n").flatMap((l) => analyserLigne(l, echelle));
+
+  if (!entrees.length) return toast("Colle d'abord ta liste, une série par ligne.");
+  if (entrees.length > 500) return toast("500 séries au maximum en une fois.");
+
+  importEntrees = entrees;
+  importOccupe  = true;
+  etapeImport("analyse");
+  progressionImport(0, entrees.length);
+
+  try {
+    await chercherLot(entrees, (fait) => progressionImport(fait, entrees.length));
+    afficherResultatsImport();
+    etapeImport("resultats");
+  } catch (err) {
+    console.error("Import :", err);
+    etapeImport("saisie");
+    toast(`Recherche impossible : ${err.message}`);
+  } finally {
+    importOccupe = false;
+  }
+});
+
+function progressionImport(fait, total) {
+  $("import-barre").style.width = `${total ? Math.round((fait / total) * 100) : 0}%`;
+
+  // Le rythme est bridé pour ne pas se faire couper par AniList : autant
+  // annoncer l'attente plutôt que de laisser une barre avancer en silence.
+  const restant = Math.ceil(((total - fait) / LOT) * 2);
+  $("import-compteur").textContent =
+    `${fait} série${fait > 1 ? "s" : ""} sur ${total}`
+    + (restant > 5 ? ` — encore ${restant} secondes environ` : "");
+}
+
+function afficherResultatsImport() {
+  const zone = $("import-lignes");
+  zone.innerHTML = "";
+
+  importEntrees.forEach((e) => zone.appendChild(ligneImport(e)));
+  bilanImport();
+}
+
+/* Une ligne de vérification. Tout y est modifiable : la série retenue, la
+   note, et la recherche elle-même — sans quoi les titres qu'AniList ne
+   reconnaît pas seraient perdus, et il y en a toujours. */
+function ligneImport(e) {
+  const ligne = document.createElement("div");
+  ligne.className = "import-ligne";
+
+  const coche = document.createElement("input");
+  coche.type = "checkbox";
+  coche.setAttribute("aria-label", "Importer cette série");
+  coche.addEventListener("change", () => {
+    e.garder = coche.checked;
+    bilanImport();
+  });
+
+  const vignette = document.createElement("img");
+  vignette.className = "import-vignette";
+  vignette.alt = ""; vignette.loading = "lazy"; vignette.referrerPolicy = "no-referrer";
+
+  const vide = document.createElement("span");
+  vide.className = "import-vide";
+  vide.textContent = "?";
+
+  const infos  = document.createElement("div");
+  infos.className = "import-infos";
+  const titre  = document.createElement("p");
+  titre.className = "import-titre";
+  const source = document.createElement("p");
+  source.className = "import-source";
+  const alt = document.createElement("select");
+  alt.className = "import-alt";
+  alt.setAttribute("aria-label", "Choisir une autre série");
+
+  const note = document.createElement("input");
+  note.type = "number";
+  note.className = "import-note";
+  note.min = 0; note.max = 10; note.step = 1;
+  note.placeholder = "—";
+  note.setAttribute("aria-label", "Ta note sur 10");
+  note.addEventListener("change", () => {
+    const v = Math.round(Number(note.value));
+    e.note = Number.isInteger(v) && v >= 1 && v <= 10 ? v : null;
+    note.value = e.note ?? "";
+  });
+
+  // Recherche manuelle, repliée tant qu'on n'en a pas besoin.
+  const relance = document.createElement("button");
+  relance.type = "button";
+  relance.className = "btn-link import-relance";
+  relance.textContent = "Chercher un autre titre";
+
+  const boite = document.createElement("div");
+  boite.className = "import-recherche";
+  boite.hidden = true;
+  const champ = document.createElement("input");
+  champ.type = "search";
+  champ.setAttribute("aria-label", "Chercher un autre titre");
+  const go = document.createElement("button");
+  go.type = "button";
+  go.className = "btn-ghost";
+  go.textContent = "Chercher";
+  boite.append(champ, go);
+
+  relance.addEventListener("click", () => {
+    boite.hidden = !boite.hidden;
+    if (!boite.hidden) { champ.value = e.titre; champ.focus(); }
+  });
+
+  const lancer = async () => {
+    const terme = champ.value.trim();
+    if (terme.length < 2 || importOccupe) return;
+    go.disabled = true; go.textContent = "…";
+    try {
+      const [resultats] = await interrogerLot([terme]);
+      if (resultats.length) {
+        e.titre = terme;
+        e.candidats = resultats;
+        classer(e);
+        boite.hidden = true;
+        peindre();
+        bilanImport();
+      } else {
+        toast(`Rien trouvé pour « ${terme} ».`);
+      }
+    } catch (err) {
+      toast("Recherche impossible pour le moment.");
+    } finally {
+      go.disabled = false; go.textContent = "Chercher";
+    }
+  };
+
+  go.addEventListener("click", lancer);
+  champ.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); lancer(); } });
+
+  /* Redessine la ligne à partir de l'état de l'entrée : le même code sert au
+     premier affichage et après une recherche manuelle. */
+  function peindre() {
+    const trouve = !!e.choix;
+    ligne.classList.toggle("est-introuvable", !trouve);
+    ligne.classList.toggle("est-douteuse", trouve && e.sur === 0);
+
+    coche.checked  = e.garder;
+    coche.disabled = !trouve;
+    note.value     = e.note ?? "";
+
+    vignette.hidden = !trouve;
+    vide.hidden     = trouve;
+    if (trouve) vignette.src = e.choix.cover;
+
+    const deja = trouve && listeCache.some((s) => s.id === e.choix.id);
+
+    titre.textContent = trouve ? e.choix.title : "Rien trouvé pour ce titre";
+    source.className  = "import-source" + (deja ? " import-deja" : "");
+    source.textContent = deja
+      ? "Déjà dans ta liste — ta progression sera conservée"
+      : (trouve && e.sur === 0 ? `Correspondance incertaine · ta ligne : ${e.brut}` : `Ta ligne : ${e.brut}`);
+
+    alt.hidden = !trouve || e.candidats.length < 2;
+    if (!alt.hidden) {
+      alt.innerHTML = "";
+      e.candidats.forEach((c, i) => {
+        const opt = document.createElement("option");
+        opt.value = i;
+        opt.textContent = c.title + (c.annee ? ` (${c.annee})` : "");
+        opt.selected = c.id === e.choix.id;
+        alt.appendChild(opt);
+      });
+    }
+  }
+
+  alt.addEventListener("change", () => {
+    e.choix = e.candidats[Number(alt.value)];
+    e.sur = Math.max(e.sur, 1);   // un choix manuel n'est plus une supposition
+    peindre();
+    bilanImport();
+  });
+
+  infos.append(titre, source, alt, relance, boite);
+  ligne.append(coche, vignette, vide, infos, note);
+  peindre();
+  return ligne;
+}
+
+function bilanImport() {
+  const trouvees    = importEntrees.filter((e) => e.choix).length;
+  const cochees     = importEntrees.filter((e) => e.garder && e.choix).length;
+  const douteuses   = importEntrees.filter((e) => e.choix && e.sur === 0).length;
+  const introuvable = importEntrees.length - trouvees;
+
+  const bouts = [`${cochees} série${cochees > 1 ? "s" : ""} cochée${cochees > 1 ? "s" : ""} sur ${importEntrees.length} lignes lues`];
+  if (introuvable) bouts.push(`${introuvable} sans résultat`);
+  if (douteuses)   bouts.push(`${douteuses} incertaine${douteuses > 1 ? "s" : ""}, décochée${douteuses > 1 ? "s" : ""} par précaution`);
+
+  $("import-bilan").textContent =
+    `${bouts.join(" · ")}. Vérifie, corrige ce qui doit l'être, puis valide.`;
+  $("import-valider").disabled = cochees === 0;
+  $("import-tout").textContent  = cochees === 0 ? "Tout cocher" : "Tout décocher";
+}
+
+$("import-tout").addEventListener("click", () => {
+  const cocher = importEntrees.filter((e) => e.garder && e.choix).length === 0;
+  importEntrees.forEach((e) => { e.garder = cocher && !!e.choix; });
+  $("import-lignes").querySelectorAll("input[type=checkbox]").forEach((c) => {
+    c.checked = cocher && !c.disabled;
+  });
+  bilanImport();
+});
+
+$("import-valider").addEventListener("click", async () => {
+  if (!currentUser) return ouvrirConnexion("Crée un compte pour importer ta liste.");
+
+  const statut = $("import-statut").value;
+  const uid = currentUser.uid;
+
+  /* Une même série peut apparaître deux fois dans le texte collé, ou deux
+     lignes différentes peuvent tomber sur le même titre. */
+  const vus = new Set();
+  const retenues = importEntrees.filter((e) => {
+    if (!e.garder || !e.choix || vus.has(e.choix.id)) return false;
+    vus.add(e.choix.id);
+    return true;
+  });
+
+  if (!retenues.length) return toast("Rien de coché.");
+
+  importOccupe = true;
+  $("import-valider").disabled = true;
+  $("import-valider").textContent = "Enregistrement…";
+
+  /* Une écriture par série serait lente et bruyante. Firestore accepte 500
+     opérations par lot ; on découpe large pour rester à l'aise. */
+  const OPS = 400;
+  const operations = [];
+
+  retenues.forEach((e) => {
+    const m = e.choix;
+    const episodes = Math.min(Math.max(m.episodes || 0, 0), 5000);
+    const dejaSuivie = listeCache.some((s) => s.id === m.id);
+
+    // Une série déjà suivie n'est pas réécrite : sa progression compte plus
+    // que ce que dit le texte collé.
+    if (!dejaSuivie) {
+      operations.push({
+        ref: doc(db, "users", uid, "animes", m.id),
+        data: {
+          id: m.id,
+          title: m.title.slice(0, 300),
+          cover: (m.cover || "").slice(0, 500),
+          episodes,
+          vus: statut === "termine" ? episodes : 0,
+          statut,
+          addedAt: Date.now()
+        }
+      });
+    }
+
+    if (e.note) {
+      operations.push({
+        ref: doc(db, "notes", m.id, "votes", uid),
+        data: { note: e.note, at: Date.now() }
+      });
+    }
+  });
+
+  try {
+    for (let i = 0; i < operations.length; i += OPS) {
+      const lot = writeBatch(db);
+      operations.slice(i, i + OPS).forEach((o) => lot.set(o.ref, o.data));
+      await lot.commit();
+    }
+
+    // Les moyennes affichées ne valent plus : nos votes viennent de s'y ajouter.
+    retenues.forEach((e) => notesCache.delete(e.choix.id));
+
+    $("import-screen").hidden = true;
+    $("import-texte").value = "";
+    toast(`${retenues.length} série${retenues.length > 1 ? "s" : ""} ajoutée${retenues.length > 1 ? "s" : ""} à ta liste.`);
+  } catch (err) {
+    console.error("Import :", err.code, err.message);
+    toast("L'enregistrement a échoué. Réessaie dans un instant.");
+  } finally {
+    importOccupe = false;
+    $("import-valider").disabled = false;
+    $("import-valider").textContent = "Ajouter à ma liste";
+  }
+});
+
 /* ══════════════════ Fiche ══════════════════ */
 
 function ouvrirFiche(a) {
@@ -959,6 +1542,8 @@ if ("serviceWorker" in navigator) {
 }
 
 /* ══════════════════ Utilitaires ══════════════════ */
+
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let toastTimer;
 function toast(msg) {

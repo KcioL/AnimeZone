@@ -87,6 +87,75 @@
     </div>
   </div>
 
+  <!-- ══ Import d'une liste existante ══ -->
+  <div id="import-screen" class="import-screen" hidden role="dialog" aria-modal="true" aria-label="Importer une liste">
+    <div class="import-box">
+      <button type="button" id="import-fermer" class="auth-fermer" aria-label="Fermer">×</button>
+      <p class="auth-titre">Importer ta liste</p>
+
+      <!-- ── Étape 1 : la personne colle son texte ── -->
+      <div id="import-saisie">
+        <p class="auth-intro">
+          Colle ta liste ici, une série par ligne. Les notes sont reconnues sous
+          toutes leurs formes — « Death Note 9 », « Death Note 18/20 »,
+          « Death Note : 4/5 » — et tes commentaires entre parenthèses sont
+          ignorés, où qu'ils se trouvent sur la ligne.
+        </p>
+
+        <label for="import-texte" class="visually-hidden">Ta liste</label>
+        <textarea id="import-texte" class="import-texte" rows="9" spellcheck="false"
+          placeholder="-my hero academia 20/20&#10;-danmachi (saison 3 juillet 2020) 20/20&#10;-sword art online 20/20 (suite 12 octobre)&#10;-val x love"></textarea>
+
+        <div class="import-options">
+          <div class="field">
+            <label for="import-echelle">Tes notes sont sur</label>
+            <select id="import-echelle">
+              <option value="10">10</option>
+              <option value="5">5</option>
+              <option value="20">20</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="import-statut">Ces séries sont</label>
+            <select id="import-statut">
+              <option value="termine">Déjà vues</option>
+              <option value="en_cours">En cours</option>
+              <option value="a_voir">À voir</option>
+            </select>
+          </div>
+        </div>
+
+        <p class="field-hint">
+          Toutes les notes sont ramenées sur 10 et arrondies. Le choix ci-dessus
+          ne sert qu'aux lignes où tu n'as écrit qu'un nombre, sans dénominateur.
+          Rien n'est enregistré avant que tu aies vérifié ce qui a été reconnu.
+        </p>
+        <button type="button" id="import-analyser" class="btn-primary">Chercher ces séries</button>
+      </div>
+
+      <!-- ── Étape 2 : recherche sur AniList ── -->
+      <div id="import-analyse" hidden>
+        <p class="auth-intro" id="import-etat">Recherche des séries sur AniList…</p>
+        <div class="progress"><span id="import-barre"></span></div>
+        <p class="fiche-progression" id="import-compteur"></p>
+      </div>
+
+      <!-- ── Étape 3 : vérification avant enregistrement ── -->
+      <div id="import-resultats" hidden>
+        <p class="auth-intro" id="import-bilan"></p>
+        <div class="import-barre-outils">
+          <button type="button" id="import-tout" class="btn-link">Tout décocher</button>
+          <button type="button" id="import-retour" class="btn-link">Modifier ma liste</button>
+        </div>
+        <div id="import-lignes" class="import-lignes"></div>
+        <div class="import-pied">
+          <button type="button" id="import-annuler" class="btn-link">Annuler</button>
+          <button type="button" id="import-valider" class="btn-primary">Ajouter à ma liste</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ══ Application ══ -->
   <div id="app-screen" hidden>
     <header class="topbar">
@@ -164,6 +233,10 @@
         </div>
 
         <div id="liste-contenu">
+        <div class="liste-outils">
+          <button type="button" id="ouvrir-import" class="btn-ghost">Importer une liste</button>
+        </div>
+
         <div id="stats" class="stats" hidden>
           <p><strong id="stat-suivis">0</strong> séries suivies</p>
           <p><strong id="stat-episodes">0</strong> épisodes vus</p>
