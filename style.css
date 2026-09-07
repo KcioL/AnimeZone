@@ -189,16 +189,23 @@ button, input { font: inherit; color: inherit; }
 
 /* ── Suppression du compte ────────────────── */
 
-/* Discret dans la barre, jamais à côté d'un bouton qu'on touche souvent :
-   c'est une action sans retour. Il ne prend sa couleur d'alerte qu'au survol. */
-.btn-danger-link { color: var(--muted); }
-.btn-danger-link:hover { color: var(--danger, #E86A6A); }
+/* Encadré de rouge en permanence : une action sans retour doit se voir comme
+   telle avant d'être touchée, pas seulement au survol — qui n'existe pas au
+   doigt. Le fond reste vide pour qu'il ne rivalise pas avec les actions
+   courantes de la barre. */
+.btn-compte-danger {
+  background: none; border: 1px solid var(--rose); border-radius: 999px;
+  padding: 6px 15px; color: var(--rose);
+  font: inherit; font-size: 0.82rem; cursor: pointer; white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-compte-danger:hover { background: var(--rose); color: #0E1320; }
 
 .supprimer-box { max-width: 460px; }
 .supprimer-corps { overflow-y: auto; }
 
 .supprimer-detail {
-  border-left: 2px solid var(--danger, #E86A6A);
+  border-left: 2px solid var(--rose);
   padding: 10px 0 10px 14px; margin: 0 0 18px;
   color: var(--text); font-size: 0.92rem; line-height: 1.6;
 }
@@ -1046,6 +1053,10 @@ button, input { font: inherit; color: inherit; }
   .serie-apercu, .serie-sans-image { width: 140px; align-self: center; }
   .serie-champs { width: 100%; }
   .avatar-choix { grid-template-columns: repeat(3, 1fr); gap: 12px; }
+
+  /* La barre du haut est déjà chargée sur téléphone : le bouton garde son
+     cadre mais rétrécit plutôt que de pousser le pseudo à la ligne. */
+  .btn-compte-danger { padding: 5px 11px; font-size: 0.76rem; }
 
   .profils { grid-template-columns: 1fr; }
   .publication { flex-direction: column; align-items: stretch; }
