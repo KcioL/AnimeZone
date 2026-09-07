@@ -1,7 +1,8 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  sendPasswordResetEmail, updateProfile, signOut, onAuthStateChanged
+  sendPasswordResetEmail, updateProfile, signOut, onAuthStateChanged,
+  deleteUser, reauthenticateWithCredential, EmailAuthProvider
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
@@ -245,6 +246,7 @@ onAuthStateChanged(auth, async (user) => {
   const connecte = !!user;
   $("user-email").hidden       = !connecte;
   $("logout").hidden           = !connecte;
+  $("supprimer-compte").hidden = !connecte;
   $("ouvrir-connexion").hidden = connecte;
   $("liste-invite").hidden     = connecte;
   $("liste-contenu").hidden    = !connecte;
@@ -859,6 +861,123 @@ function rafraichirCartes() {
     }
   });
 }
+
+/* ══════════════════ Suppression du compte ══════════════════
+
+   Un compte qu'on ne peut pas supprimer n'est pas vraiment à soi. La
+   suppression est donc réelle et complète, pas un simple drapeau posé sur le
+   profil : la liste, les notes, la réservation du pseudo, la vitrine publique
+   et le compte d'authentification lui-même disparaissent.
+
+   L'ordre compte. On réauthentifie d'abord — Firebase l'exige pour une
+   opération aussi lourde, et ça vérifie que c'est bien le titulaire du compte
+   qui est devant l'écran. On efface ensuite les données, tant que les règles
+   nous y autorisent encore. Le compte d'authentification part en dernier :
+   une fois lui supprimé, plus aucune écriture n'est possible et ce qui
+   resterait serait irrécupérable, sans propriétaire pour y accéder.
+   ═══════════════════════════════════════════════════════════ */
+
+const MOT_CONFIRMATION = "SUPPRIMER";
+
+function ouvrirSuppression() {
+  if (!currentUser) return;
+  $("supprimer-screen").hidden = false;
+  $("supprimer-mot").value = "";
+  $("supprimer-mdp").value = "";
+  $("supprimer-erreur").hidden = true;
+  $("supprimer-detail").textContent =
+    `${listeCache.length} série${listeCache.length > 1 ? "s" : ""} suivie${listeCache.length > 1 ? "s" : ""}` +
+    `, tes notes, ton pseudo et ton profil public s'il est publié.`;
+  setTimeout(() => $("supprimer-mot").focus(), 100);
+}
+
+const fermerSuppression = () => { $("supprimer-screen").hidden = true; };
+
+$("supprimer-compte").addEventListener("click", ouvrirSuppression);
+$("supprimer-fermer").addEventListener("click", fermerSuppression);
+$("supprimer-annuler").addEventListener("click", fermerSuppression);
+$("supprimer-screen").addEventListener("click", (e) => {
+  if (e.target === $("supprimer-screen")) fermerSuppression();
+});
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("supprimer-screen").hidden) fermerSuppression();
+});
+
+function erreurSuppression(msg) {
+  $("supprimer-erreur").textContent = msg;
+  $("supprimer-erreur").hidden = false;
+}
+
+/* Firestore ne supprime pas une sous-collection en supprimant son parent :
+   chaque document doit partir explicitement. On les efface par lots. */
+async function effacerDonnees(uid, pseudo) {
+  const OPS = 400;
+  const refs = [];
+
+  const animes = await getDocs(collection(db, "users", uid, "animes"));
+  animes.forEach((d) => refs.push(doc(db, "users", uid, "animes", d.id)));
+
+  // Votes publics laissés par l'ancienne version du site. Ils ne sont plus
+  // écrits, mais ceux d'avant existent toujours et portent ton identifiant.
+  listeCache.forEach((s) => {
+    if (!estLocale(s.id)) refs.push(doc(db, "notes", s.id, "votes", uid));
+  });
+
+  refs.push(doc(db, "profilsPublics", uid));
+  if (pseudo) refs.push(doc(db, "usernames", pseudo.toLowerCase()));
+  refs.push(doc(db, "users", uid));
+
+  for (let i = 0; i < refs.length; i += OPS) {
+    const lot = writeBatch(db);
+    refs.slice(i, i + OPS).forEach((r) => lot.delete(r));
+    await lot.commit();
+  }
+  return refs.length;
+}
+
+$("supprimer-valider").addEventListener("click", async () => {
+  if (!currentUser) return;
+
+  if ($("supprimer-mot").value.trim().toUpperCase() !== MOT_CONFIRMATION) {
+    return erreurSuppression(`Écris ${MOT_CONFIRMATION} en toutes lettres pour confirmer.`);
+  }
+  const mdp = $("supprimer-mdp").value;
+  if (!mdp) return erreurSuppression("Ton mot de passe est nécessaire pour confirmer.");
+
+  $("supprimer-valider").disabled = true;
+  $("supprimer-valider").textContent = "Suppression…";
+
+  try {
+    const user = currentUser;
+    const uid  = user.uid;
+
+    await reauthenticateWithCredential(
+      user, EmailAuthProvider.credential(user.email, mdp));
+
+    // Le pseudo est lu avant l'effacement : après, le profil n'existe plus.
+    let pseudo = null;
+    try { pseudo = (await getDoc(doc(db, "users", uid))).data()?.pseudo || null; } catch {}
+
+    if (unsubscribe) { unsubscribe(); unsubscribe = null; }   // plus d'écoute pendant l'effacement
+
+    await effacerDonnees(uid, pseudo);
+    await deleteUser(user);
+
+    fermerSuppression();
+    toast("Ton compte et toutes tes données ont été supprimés.");
+  } catch (err) {
+    console.error("Suppression :", err.code, err.message);
+    erreurSuppression(
+      err.code === "auth/wrong-password" || err.code === "auth/invalid-credential"
+        ? "Mot de passe incorrect."
+        : err.code === "auth/too-many-requests"
+          ? "Trop de tentatives. Réessaie dans quelques minutes."
+          : "La suppression a échoué. Tes données sont intactes, réessaie.");
+  } finally {
+    $("supprimer-valider").disabled = false;
+    $("supprimer-valider").textContent = "Supprimer définitivement";
+  }
+});
 
 /* ══════════════════ Profils publics ══════════════════
 

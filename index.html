@@ -260,6 +260,44 @@
     </div>
   </div>
 
+  <!-- ══ Suppression du compte ══ -->
+  <div id="supprimer-screen" class="import-screen" hidden role="dialog" aria-modal="true" aria-labelledby="supprimer-titre">
+    <div class="import-box supprimer-box">
+      <button type="button" id="supprimer-fermer" class="auth-fermer" aria-label="Fermer">×</button>
+      <p class="auth-titre" id="supprimer-titre">Supprimer ton compte</p>
+
+      <div class="supprimer-corps">
+        <p class="auth-intro">
+          Cette action est définitive et rien ne permet de revenir en arrière.
+          Seront effacés sans possibilité de récupération :
+        </p>
+        <p class="supprimer-detail" id="supprimer-detail"></p>
+        <p class="auth-intro">
+          Ton pseudo redeviendra disponible pour quelqu'un d'autre. Si tu veux
+          seulement faire une pause, déconnecte-toi : ta liste t'attendra.
+        </p>
+
+        <div class="field">
+          <label for="supprimer-mot">Écris SUPPRIMER pour confirmer</label>
+          <input type="text" id="supprimer-mot" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        </div>
+
+        <div class="field">
+          <label for="supprimer-mdp">Ton mot de passe</label>
+          <input type="password" id="supprimer-mdp" autocomplete="current-password">
+          <p class="field-hint">Demandé pour vérifier que c'est bien toi.</p>
+        </div>
+
+        <p id="supprimer-erreur" class="form-error" role="alert" hidden></p>
+      </div>
+
+      <div class="import-pied">
+        <button type="button" id="supprimer-annuler" class="btn-link">Annuler</button>
+        <button type="button" id="supprimer-valider" class="btn-danger">Supprimer définitivement</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ══ Application ══ -->
   <div id="app-screen" hidden>
     <header class="topbar">
@@ -301,6 +339,7 @@
         <img id="user-avatar" class="user-avatar" alt="" hidden>
         <span id="user-email" class="user-email" hidden></span>
         <button type="button" id="logout" class="btn-link" hidden>Se déconnecter</button>
+        <button type="button" id="supprimer-compte" class="btn-link btn-danger-link" hidden>Supprimer mon compte</button>
         <button type="button" id="ouvrir-connexion" class="btn-primary btn-compact" hidden>
           Créer un compte
         </button>

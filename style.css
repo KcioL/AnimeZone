@@ -187,6 +187,31 @@ button, input { font: inherit; color: inherit; }
 .auth-switch { margin: 22px 0 0; font-size: 0.88rem; color: var(--muted); }
 
 
+/* ── Suppression du compte ────────────────── */
+
+/* Discret dans la barre, jamais à côté d'un bouton qu'on touche souvent :
+   c'est une action sans retour. Il ne prend sa couleur d'alerte qu'au survol. */
+.btn-danger-link { color: var(--muted); }
+.btn-danger-link:hover { color: var(--danger, #E86A6A); }
+
+.supprimer-box { max-width: 460px; }
+.supprimer-corps { overflow-y: auto; }
+
+.supprimer-detail {
+  border-left: 2px solid var(--danger, #E86A6A);
+  padding: 10px 0 10px 14px; margin: 0 0 18px;
+  color: var(--text); font-size: 0.92rem; line-height: 1.6;
+}
+
+.supprimer-corps input {
+  width: 100%;
+  background: var(--bg); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 11px 12px;
+  color: var(--text); font: inherit;
+}
+.supprimer-corps input:focus { border-color: var(--accent); outline: none; }
+#supprimer-mot { letter-spacing: 0.12em; font-weight: 600; }
+
 /* ── Où regarder la série ─────────────────── */
 
 .plateformes {
