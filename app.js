@@ -799,6 +799,13 @@ const TRIS = {
   alpha:  "Alphabétique"
 };
 
+let rechercheListe = "";
+
+$("liste-recherche").addEventListener("input", (e) => {
+  rechercheListe = e.target.value;
+  afficherListe();
+});
+
 let triCourant = "defaut";
 try { triCourant = localStorage.getItem("animezone-tri") || "defaut"; } catch {}
 if (!TRIS[triCourant]) triCourant = "defaut";
@@ -855,10 +862,27 @@ function afficherListe() {
   $("stat-episodes").textContent = episodes;
   $("stat-termines").textContent = termines;
 
-  const visibles = trier(
-    listeCache.filter((s) => filtreStatut === "tous" || s.statut === filtreStatut));
+  /* La recherche est purement locale : la liste est déjà en mémoire, aucune
+     requête n'est nécessaire. Le titre est normalisé des deux côtés — sans
+     accents ni ponctuation — pour que « re zero » trouve « Re:ZERO ». */
+  const cherche = cleTitre(rechercheListe);
 
-  $("liste-vide").hidden = listeCache.length > 0;
+  const visibles = trier(listeCache
+    .filter((s) => filtreStatut === "tous" || s.statut === filtreStatut)
+    .filter((s) => !cherche || cleTitre(s.title).includes(cherche)));
+
+  if (listeCache.length === 0) {
+    $("liste-vide").textContent =
+      "Rien ici pour l'instant. Passe par À venir ou Découvrir pour ajouter une série.";
+    $("liste-vide").hidden = false;
+  } else if (visibles.length === 0) {
+    $("liste-vide").textContent = cherche
+      ? `Aucune série de ta liste ne correspond à « ${rechercheListe.trim()} ».`
+      : "Aucune série avec ce statut.";
+    $("liste-vide").hidden = false;
+  } else {
+    $("liste-vide").hidden = true;
+  }
 
   visibles.forEach((s) => {
     const el = document.createElement("button");
