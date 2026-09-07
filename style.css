@@ -502,6 +502,16 @@ button, input { font: inherit; color: inherit; }
 .import-texte:focus { border-color: var(--accent); outline: none; }
 
 .import-options { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 18px; }
+
+.import-case {
+  display: flex; align-items: flex-start; gap: 10px;
+  margin: 4px 0 16px; cursor: pointer; font-size: 0.9rem;
+}
+.import-case input {
+  width: 20px; height: 20px; flex-shrink: 0; margin-top: 1px;
+  accent-color: var(--accent); cursor: pointer;
+}
+.import-case .field-hint { margin: 3px 0 0; }
 .import-options .field { flex: 1; min-width: 150px; }
 
 .import-options select {
@@ -799,7 +809,20 @@ button, input { font: inherit; color: inherit; }
   font-weight: 600; color: var(--accent); margin-right: 8px;
 }
 
-.filtres { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+.filtres { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.barre-filtres {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px; margin-bottom: 24px;
+}
+
+.tri-select {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  padding: 7px 14px; color: var(--muted);
+  font: inherit; font-size: 0.85rem; cursor: pointer;
+}
+.tri-select:hover { border-color: var(--muted); color: var(--text); }
+.tri-select:focus { border-color: var(--accent); outline: none; }
 
 /* Les filtres d'un profil consulté sont volontairement une classe distincte —
    ils ne doivent pas hériter de l'écouteur qui pilote ta propre liste — mais
@@ -1076,6 +1099,10 @@ button, input { font: inherit; color: inherit; }
   /* La barre du haut est déjà chargée sur téléphone : le bouton garde son
      cadre mais rétrécit plutôt que de pousser le pseudo à la ligne. */
   .btn-compte-danger { padding: 5px 11px; font-size: 0.76rem; }
+
+  /* Le menu de tri passe sous les filtres plutôt que de les comprimer. */
+  .barre-filtres { flex-direction: column; align-items: stretch; gap: 10px; }
+  .tri-select { width: 100%; }
 
   .profils { grid-template-columns: 1fr; }
   .publication { flex-direction: column; align-items: stretch; }

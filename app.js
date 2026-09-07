@@ -785,6 +785,63 @@ document.querySelectorAll(".filtre").forEach((btn) => {
 
 const estTermine = (s) => s.episodes > 0 && s.vus >= s.episodes;
 
+/* ══════════════════ Tri des listes ══════════════════
+
+   Le même tri sert à ta liste et à celle d'un profil consulté : c'est une
+   préférence de lecture, pas une propriété des données. Elle est retenue d'une
+   visite à l'autre.
+   ════════════════════════════════════════════════════ */
+
+const TRIS = {
+  defaut: "En cours d'abord",
+  ajout:  "Ordre d'ajout",
+  recent: "Ajouts récents",
+  alpha:  "Alphabétique"
+};
+
+let triCourant = "defaut";
+try { triCourant = localStorage.getItem("animezone-tri") || "defaut"; } catch {}
+if (!TRIS[triCourant]) triCourant = "defaut";
+
+const parTitre = (a, b) =>
+  a.title.localeCompare(b.title, "fr", { sensitivity: "base", numeric: true });
+
+function trier(liste) {
+  const copie = [...liste];
+
+  // Les séries en cours d'abord : c'est ce qu'on vient consulter.
+  const rang = (s) => (s.statut === "en_cours" ? 0 : s.statut === "a_voir" ? 1 : 2);
+
+  switch (triCourant) {
+    case "alpha":  return copie.sort(parTitre);
+    case "ajout":  return copie.sort((a, b) => (a.addedAt || 0) - (b.addedAt || 0) || parTitre(a, b));
+    case "recent": return copie.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0) || parTitre(a, b));
+    default:       return copie.sort((a, b) => rang(a) - rang(b) || parTitre(a, b));
+  }
+}
+
+function construireTri(id, auChangement) {
+  const sel = $(id);
+  sel.innerHTML = "";
+  Object.entries(TRIS).forEach(([cle, libelle]) => {
+    const opt = document.createElement("option");
+    opt.value = cle;
+    opt.textContent = libelle;
+    opt.selected = cle === triCourant;
+    sel.appendChild(opt);
+  });
+  sel.addEventListener("change", () => {
+    triCourant = sel.value;
+    try { localStorage.setItem("animezone-tri", triCourant); } catch {}
+    // L'autre menu doit refléter le même choix.
+    document.querySelectorAll(".tri-select").forEach((s) => { s.value = triCourant; });
+    auChangement();
+  });
+}
+
+construireTri("tri-liste", () => afficherListe());
+construireTri("tri-profil", () => afficherListeProfil());
+
 function afficherListe() {
   const grille = $("liste");
   grille.innerHTML = "";
@@ -798,13 +855,8 @@ function afficherListe() {
   $("stat-episodes").textContent = episodes;
   $("stat-termines").textContent = termines;
 
-  /* Les séries en cours d'abord : c'est ce qu'on vient consulter. Ensuite
-     l'ordre alphabétique, avec les règles françaises pour les accents. */
-  const rang = (s) => (s.statut === "en_cours" ? 0 : s.statut === "a_voir" ? 1 : 2);
-  const visibles = listeCache
-    .filter((s) => filtreStatut === "tous" || s.statut === filtreStatut)
-    .sort((a, b) => rang(a) - rang(b)
-      || a.title.localeCompare(b.title, "fr", { sensitivity: "base", numeric: true }));
+  const visibles = trier(
+    listeCache.filter((s) => filtreStatut === "tous" || s.statut === filtreStatut));
 
   $("liste-vide").hidden = listeCache.length > 0;
 
@@ -1215,7 +1267,8 @@ async function ouvrirProfil(p) {
 function afficherListeProfil() {
   const zone = $("profil-liste");
   const toutes = profilVu?.series_liste || [];
-  const vues = filtreProfil === "tous" ? toutes : toutes.filter((s) => s.statut === filtreProfil);
+  const vues = trier(
+    filtreProfil === "tous" ? toutes : toutes.filter((s) => s.statut === filtreProfil));
 
   zone.innerHTML = "";
   $("profil-vide").hidden = vues.length > 0;
@@ -2078,7 +2131,14 @@ $("import-valider").addEventListener("click", async () => {
   const OPS = 400;
   const operations = [];
 
-  retenues.forEach((e) => {
+  /* Trois cents séries écrites en un lot partagent la même milliseconde :
+     l'ordre du fichier serait perdu, et « ordre d'ajout » afficherait un
+     classement arbitraire. On écarte donc les horodatages d'un millième de
+     seconde chacun, dans l'ordre où les lignes ont été collées. */
+  const instant = Date.now();
+  const reordonner = $("import-reordonner").checked;
+
+  retenues.forEach((e, rangEntree) => {
     /* Sans correspondance AniList, la série est créée telle qu'elle était
        écrite : titre seul, sans jaquette, modifiable depuis sa fiche. Si un
        import précédent l'a déjà créée, on reprend son identifiant au lieu
@@ -2099,7 +2159,7 @@ $("import-valider").addEventListener("click", async () => {
       episodes,
       vus: statut === "termine" ? episodes : 0,
       statut,
-      addedAt: Date.now()
+      addedAt: instant + rangEntree
     };
 
     // La note accompagne la série : elle reste personnelle et n'entre dans
@@ -2108,10 +2168,17 @@ $("import-valider").addEventListener("click", async () => {
     if (e.note) { data.note = e.note; data.sur = echelleImport; }
 
     if (dejaSuivie) {
-      if (!e.note) return;
+      /* Une série déjà suivie n'est jamais réécrite : sa progression, ses
+         images et ses corrections valent mieux que ce que dit le fichier.
+         Seules la note et, si tu l'as demandé, sa place dans l'ordre. */
+      const retouche = {};
+      if (e.note) { retouche.note = e.note; retouche.sur = echelleImport; }
+      if (reordonner) retouche.addedAt = instant + rangEntree;
+
+      if (!Object.keys(retouche).length) return;
       operations.push({
         ref: doc(db, "users", uid, "animes", m.id),
-        data: { note: e.note, sur: echelleImport },
+        data: retouche,
         fusion: true
       });
       return;
@@ -2129,7 +2196,9 @@ $("import-valider").addEventListener("click", async () => {
 
     $("import-screen").hidden = true;
     $("import-texte").value = "";
-    toast(`${retenues.length} série${retenues.length > 1 ? "s" : ""} ajoutée${retenues.length > 1 ? "s" : ""} à ta liste.`);
+    toast(reordonner
+      ? `${retenues.length} série${retenues.length > 1 ? "s" : ""} enregistrée${retenues.length > 1 ? "s" : ""}, ta liste suit l'ordre du fichier.`
+      : `${retenues.length} série${retenues.length > 1 ? "s" : ""} ajoutée${retenues.length > 1 ? "s" : ""} à ta liste.`);
   } catch (err) {
     console.error("Import :", err.code, err.message);
     toast("L'enregistrement a échoué. Réessaie dans un instant.");
