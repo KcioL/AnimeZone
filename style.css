@@ -818,13 +818,63 @@ button, input { font: inherit; color: inherit; }
   flex-wrap: wrap; gap: 12px; margin-bottom: 24px;
 }
 
-.tri-select {
+.tri { position: relative; }
+
+.tri-bouton {
+  display: inline-flex; align-items: center; gap: 9px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
-  padding: 7px 14px; color: var(--muted);
+  padding: 8px 14px; color: var(--muted);
   font: inherit; font-size: 0.85rem; cursor: pointer;
+  touch-action: manipulation;
+  transition: border-color 0.15s, color 0.15s;
 }
-.tri-select:hover { border-color: var(--muted); color: var(--text); }
-.tri-select:focus { border-color: var(--accent); outline: none; }
+.tri-bouton:hover { border-color: var(--muted); color: var(--text); }
+.tri-bouton[aria-expanded="true"] { border-color: var(--accent); color: var(--text); }
+
+.tri-icone, .tri-chevron {
+  width: 15px; height: 15px; flex-shrink: 0;
+  fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.tri-icone { color: var(--accent); }
+.tri-chevron { width: 13px; height: 13px; transition: transform 0.2s; }
+.tri-bouton[aria-expanded="true"] .tri-chevron { transform: rotate(180deg); }
+
+.tri-valeur { color: var(--text); font-weight: 500; }
+
+/* Le panneau du select natif est dessiné par le système : blanc, carré, hors
+   de la charte. Celui-ci est à nous. */
+.tri-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
+  min-width: 210px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 18px 40px rgba(4, 8, 16, 0.55);
+  animation: tri-apparait 0.14s ease-out;
+}
+
+@keyframes tri-apparait {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.tri-option {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; padding: 9px 12px; border-radius: 8px;
+  background: none; border: none; text-align: left;
+  color: var(--muted); font: inherit; font-size: 0.87rem; cursor: pointer;
+}
+.tri-option:hover, .tri-option:focus-visible {
+  background: var(--raised); color: var(--text); outline: none;
+}
+.tri-option.is-active { color: var(--accent); font-weight: 600; }
+
+.tri-coche {
+  width: 15px; height: 15px; flex-shrink: 0; opacity: 0;
+  fill: none; stroke: currentColor; stroke-width: 2.4;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.tri-option.is-active .tri-coche { opacity: 1; }
 
 /* Les filtres d'un profil consulté sont volontairement une classe distincte —
    ils ne doivent pas hériter de l'écouteur qui pilote ta propre liste — mais
@@ -1102,11 +1152,13 @@ button, input { font: inherit; color: inherit; }
      cadre mais rétrécit plutôt que de pousser le pseudo à la ligne. */
   .btn-compte-danger { padding: 5px 11px; font-size: 0.76rem; }
 
-  /* Le menu de tri passe sous les filtres plutôt que de les comprimer. */
-  .search-liste { margin-bottom: 18px; }
-
-.barre-filtres { flex-direction: column; align-items: stretch; gap: 10px; }
-  .tri-select { width: 100%; }
+  /* Le menu de tri passe sous les filtres plutôt que de les comprimer, et
+     s'ouvre sur toute la largeur : viser une option dans un panneau étroit,
+     au pouce, ne fonctionne pas. */
+  .barre-filtres { flex-direction: column; align-items: stretch; gap: 10px; }
+  .tri-bouton { width: 100%; justify-content: center; padding: 11px 14px; }
+  .tri-menu { left: 0; right: 0; min-width: 0; }
+  .tri-option { padding: 12px; }
 
   .profils { grid-template-columns: 1fr; }
   .publication { flex-direction: column; align-items: stretch; }

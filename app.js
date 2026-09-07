@@ -827,24 +827,87 @@ function trier(liste) {
   }
 }
 
+/* Un <select> natif ne se style pas : la liste qui s'ouvre est dessinée par le
+   système, blanche et carrée au milieu d'une interface sombre. On construit
+   donc le menu à la main — un bouton et un panneau — pour qu'il ressemble au
+   reste du site. Le comportement clavier et les rôles ARIA reproduisent ce que
+   le select offrait gratuitement. */
+const rappelsTri = [];
+
 function construireTri(id, auChangement) {
-  const sel = $(id);
-  sel.innerHTML = "";
-  Object.entries(TRIS).forEach(([cle, libelle]) => {
-    const opt = document.createElement("option");
-    opt.value = cle;
-    opt.textContent = libelle;
-    opt.selected = cle === triCourant;
-    sel.appendChild(opt);
+  const hote = $(id);
+  hote.innerHTML = "";
+
+  const bouton = document.createElement("button");
+  bouton.type = "button";
+  bouton.className = "tri-bouton";
+  bouton.setAttribute("aria-haspopup", "listbox");
+  bouton.setAttribute("aria-expanded", "false");
+  bouton.setAttribute("aria-label", hote.dataset.libelle || "Trier");
+  bouton.innerHTML = `
+    <svg class="tri-icone" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 5v14M7 19l-3-3M7 19l3-3M17 19V5M17 5l-3 3M17 5l3 3"/>
+    </svg>
+    <span class="tri-valeur"></span>
+    <svg class="tri-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>`;
+
+  const menu = document.createElement("div");
+  menu.className = "tri-menu";
+  menu.setAttribute("role", "listbox");
+  menu.hidden = true;
+
+  const lignes = Object.entries(TRIS).map(([cle, libelle]) => {
+    const opt = document.createElement("button");
+    opt.type = "button";
+    opt.className = "tri-option";
+    opt.setAttribute("role", "option");
+    opt.innerHTML = `<span>${libelle}</span>
+      <svg class="tri-coche" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg>`;
+    opt.addEventListener("click", () => {
+      triCourant = cle;
+      try { localStorage.setItem("animezone-tri", triCourant); } catch {}
+      fermerTris();
+      rappelsTri.forEach((f) => f());     // les deux menus suivent le même choix
+    });
+    menu.appendChild(opt);
+    return { cle, opt };
   });
-  sel.addEventListener("change", () => {
-    triCourant = sel.value;
-    try { localStorage.setItem("animezone-tri", triCourant); } catch {}
-    // L'autre menu doit refléter le même choix.
-    document.querySelectorAll(".tri-select").forEach((s) => { s.value = triCourant; });
-    auChangement();
+
+  const peindre = () => {
+    bouton.querySelector(".tri-valeur").textContent = TRIS[triCourant];
+    lignes.forEach(({ cle, opt }) => {
+      const actif = cle === triCourant;
+      opt.classList.toggle("is-active", actif);
+      opt.setAttribute("aria-selected", String(actif));
+    });
+  };
+
+  bouton.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const ouvert = !menu.hidden;
+    fermerTris();
+    if (!ouvert) {
+      menu.hidden = false;
+      bouton.setAttribute("aria-expanded", "true");
+      lignes.find((l) => l.cle === triCourant)?.opt.focus();
+    }
   });
+
+  hote.append(bouton, menu);
+  peindre();
+
+  rappelsTri.push(() => { peindre(); auChangement(); });
+  return peindre;
 }
+
+function fermerTris() {
+  document.querySelectorAll(".tri-menu").forEach((m) => { m.hidden = true; });
+  document.querySelectorAll(".tri-bouton").forEach((b) =>
+    b.setAttribute("aria-expanded", "false"));
+}
+
+document.addEventListener("click", fermerTris);
+addEventListener("keydown", (e) => { if (e.key === "Escape") fermerTris(); });
 
 construireTri("tri-liste", () => afficherListe());
 construireTri("tri-profil", () => afficherListeProfil());
