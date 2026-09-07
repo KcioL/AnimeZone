@@ -251,6 +251,57 @@ button, input { font: inherit; color: inherit; }
 
 .plateformes .field-hint { margin: 14px 0 0; }
 
+/* ── Succès ───────────────────────────────── */
+
+.rattrapage {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 14px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: 12px; padding: 15px 18px; margin: 22px 0 8px;
+}
+.rattrapage .section-note { margin: 0; flex: 1; min-width: 220px; }
+
+.succes-famille {
+  margin: 30px 0 14px; font-size: 0.82rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+}
+
+.succes-grille {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+}
+
+.succes {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 12px; padding: 15px 16px;
+}
+.succes.est-acquis { border-color: rgba(70, 212, 200, 0.4); }
+
+.succes-tete {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.succes-titre { font-weight: 600; font-size: 0.95rem; }
+.succes.est-acquis .succes-titre { color: var(--accent); }
+
+.succes-coche {
+  width: 16px; height: 16px; flex-shrink: 0; color: var(--accent);
+  fill: none; stroke: currentColor; stroke-width: 2.6;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+.succes-desc { margin: 5px 0 12px; font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+
+.succes-barre {
+  height: 5px; border-radius: 999px; background: var(--raised); overflow: hidden;
+}
+.succes-barre span {
+  display: block; height: 100%; border-radius: 999px;
+  background: var(--accent); transition: width 0.4s ease-out;
+}
+
+.succes-compte { margin: 7px 0 0; font-size: 0.76rem; color: var(--muted); }
+
 /* ── Profils publics ──────────────────────── */
 
 .publication {
@@ -1064,8 +1115,8 @@ button, input { font: inherit; color: inherit; }
 
   .barre-curseur {
     position: absolute; top: 5px; bottom: 5px; left: 5px;
-    /* Quatre onglets : la largeur du curseur suit, sans quoi il déborde. */
-    width: calc((100% - 10px - 12px) / 4);
+    /* Cinq onglets : quatre intervalles de 4 px à retrancher. */
+    width: calc((100% - 10px - 16px) / 5);
     border-radius: 14px;
     background: rgba(70, 212, 200, 0.14);
     border: 1px solid rgba(70, 212, 200, 0.32);
@@ -1159,6 +1210,15 @@ button, input { font: inherit; color: inherit; }
   .tri-bouton { width: 100%; justify-content: center; padding: 11px 14px; }
   .tri-menu { left: 0; right: 0; min-width: 0; }
   .tri-option { padding: 12px; }
+
+  /* Cinq onglets sur un écran de téléphone : les libellés rétrécissent
+     plutôt que de se chevaucher. */
+  .onglet-bas { font-size: 0.6rem; gap: 3px; }
+  .onglet-bas svg { width: 21px; height: 21px; }
+
+  .succes-grille { grid-template-columns: 1fr; }
+  .rattrapage { flex-direction: column; align-items: stretch; }
+  .rattrapage .btn-ghost { width: 100%; padding: 11px; }
 
   .profils { grid-template-columns: 1fr; }
   .publication { flex-direction: column; align-items: stretch; }

@@ -4,7 +4,7 @@
    réseau d'abord, pour qu'une mise en ligne s'applique immédiatement. Les
    images et bibliothèques versionnées restent en cache. */
 
-const VERSION = "animezone-v8";
+const VERSION = "animezone-v9";
 
 const COQUE = [
   "./", "./index.html", "./style.css", "./app.js",

@@ -534,6 +534,7 @@ function showView(nom) {
 
   $("view-avenir").hidden    = nom !== "avenir";
   $("view-decouvrir").hidden = nom !== "decouvrir";
+  $("view-succes").hidden    = nom !== "succes";
   $("view-profils").hidden   = nom !== "profils";
   $("view-profil").hidden    = nom !== "profil";
   $("view-liste").hidden     = nom !== "liste";
@@ -550,8 +551,9 @@ function showView(nom) {
   });
 
   if (nom === "profils") chargerProfils();
+  if (nom === "succes")  afficherSucces();
 
-  const rang = ["avenir", "decouvrir", "profils", "liste"].indexOf(onglet);
+  const rang = ["avenir", "decouvrir", "profils", "liste", "succes"].indexOf(onglet);
   document.querySelector(".barre-basse")?.style.setProperty("--onglet", rang);
 
   if (nom !== "fiche") ficheCourante = null;
@@ -783,6 +785,7 @@ function suivreListe(uid) {
     if (ficheCourante) majFiche();
     rafraichirCartes();
     majPublication();
+    if (!$("view-succes").hidden) afficherSucces();
     planifierVitrine();   // les compteurs publiés suivent la liste
   }, (err) => {
     console.error("Firestore :", err.code, err.message);
@@ -1133,6 +1136,170 @@ $("supprimer-valider").addEventListener("click", async () => {
     $("supprimer-valider").textContent = "Supprimer définitivement";
   }
 });
+
+/* ══════════════════ Succès ══════════════════
+
+   Tout se calcule à la volée depuis la liste déjà en mémoire : rien n'est
+   stocké, rien n'est écrit, aucun succès ne peut se désynchroniser des données
+   qu'il décrit. Retirer une série retire le succès qu'elle avait débloqué, ce
+   qui est la seule définition honnête d'un compteur.
+
+   Seuls les genres manquent aux séries importées avant que le site ne pense à
+   les conserver. D'où le rattrapage, qui les redemande à AniList une fois.
+   ════════════════════════════════════════════ */
+
+const SUCCES = [
+  { famille: "Parcours", titre: "Premiers pas",        desc: "Terminer une première série",        cible: 1,    mesure: (b) => b.termines },
+  { famille: "Parcours", titre: "Habitué",             desc: "Terminer 10 séries",                 cible: 10,   mesure: (b) => b.termines },
+  { famille: "Parcours", titre: "Vétéran",             desc: "Terminer 50 séries",                 cible: 50,   mesure: (b) => b.termines },
+  { famille: "Parcours", titre: "Bibliothèque vivante",desc: "Terminer 150 séries",                cible: 150,  mesure: (b) => b.termines },
+  { famille: "Parcours", titre: "Sans fin",            desc: "Terminer 300 séries",                cible: 300,  mesure: (b) => b.termines },
+
+  { famille: "Temps passé", titre: "Cent épisodes",    desc: "Voir 100 épisodes",                  cible: 100,  mesure: (b) => b.episodes },
+  { famille: "Temps passé", titre: "Marathonien",      desc: "Voir 1 000 épisodes",                cible: 1000, mesure: (b) => b.episodes },
+  { famille: "Temps passé", titre: "Insomniaque",      desc: "Voir 3 000 épisodes",                cible: 3000, mesure: (b) => b.episodes },
+  { famille: "Temps passé", titre: "Longue haleine",   desc: "Terminer une série de 100 épisodes ou plus", cible: 1, mesure: (b) => b.fleuve },
+
+  { famille: "Curiosité", titre: "Éclectique",         desc: "Avoir vu 5 genres différents",       cible: 5,    mesure: (b) => b.genres.size, besoinGenres: true },
+  { famille: "Curiosité", titre: "Touche-à-tout",      desc: "Avoir vu 10 genres différents",      cible: 10,   mesure: (b) => b.genres.size, besoinGenres: true },
+  { famille: "Curiosité", titre: "Rien ne t'échappe",  desc: "Avoir vu 15 genres différents",      cible: 15,   mesure: (b) => b.genres.size, besoinGenres: true },
+  { famille: "Curiosité", titre: "Grand écran",        desc: "Terminer 5 films",                   cible: 5,    mesure: (b) => b.films, besoinGenres: true },
+
+  { famille: "Tenue de liste", titre: "Premier avis",  desc: "Noter une série",                    cible: 1,    mesure: (b) => b.notees },
+  { famille: "Tenue de liste", titre: "Critique",      desc: "Noter 50 séries",                    cible: 50,   mesure: (b) => b.notees },
+  { famille: "Tenue de liste", titre: "Juré",          desc: "Noter 200 séries",                   cible: 200,  mesure: (b) => b.notees },
+  { famille: "Tenue de liste", titre: "Archiviste",    desc: "Créer 5 séries à la main",           cible: 5,    mesure: (b) => b.locales },
+  { famille: "Tenue de liste", titre: "Exigeant",      desc: "Mettre la note maximale à 10 séries", cible: 10,  mesure: (b) => b.parfaites },
+  { famille: "Tenue de liste", titre: "Sur tous les fronts", desc: "Suivre 5 séries en cours en même temps", cible: 5, mesure: (b) => b.enCours }
+];
+
+function bilanSucces() {
+  const genres = new Set();
+  let films = 0, fleuve = 0, parfaites = 0;
+
+  listeCache.forEach((s) => {
+    const fini = s.statut === "termine";
+    if (fini) (s.genres || []).forEach((g) => genres.add(g));
+    if (fini && s.format === "MOVIE") films++;
+    if (fini && (s.episodes || 0) >= 100) fleuve++;
+    if (s.note && s.note === (s.sur || 10)) parfaites++;
+  });
+
+  return {
+    termines: listeCache.filter((s) => s.statut === "termine").length,
+    enCours:  listeCache.filter((s) => s.statut === "en_cours").length,
+    episodes: listeCache.reduce((n, s) => n + (s.vus || 0), 0),
+    notees:   listeCache.filter((s) => s.note).length,
+    locales:  listeCache.filter((s) => estLocale(s.id)).length,
+    genres, films, fleuve, parfaites
+  };
+}
+
+// Séries AniList dont on ignore encore les genres : celles importées avant.
+const sansGenres = () =>
+  listeCache.filter((s) => !estLocale(s.id) && !Array.isArray(s.genres));
+
+function afficherSucces() {
+  $("succes-invite").hidden  = !!currentUser;
+  $("succes-contenu").hidden = !currentUser;
+  if (!currentUser) return;
+
+  const b = bilanSucces();
+  const manquantes = sansGenres().length;
+
+  $("rattrapage").hidden = manquantes === 0;
+  $("rattrapage-texte").textContent =
+    `${manquantes} série${manquantes > 1 ? "s" : ""} de ta liste ont été ajoutées avant que le site ne conserve leur genre. ` +
+    `Les succès de curiosité restent incomplets tant qu'elles n'ont pas été complétées.`;
+
+  const obtenus = SUCCES.filter((x) => x.mesure(b) >= x.cible).length;
+  $("succes-bilan").textContent =
+    `${obtenus} succès sur ${SUCCES.length}.`;
+
+  const zone = $("succes-liste");
+  zone.innerHTML = "";
+
+  const familles = [...new Set(SUCCES.map((x) => x.famille))];
+
+  familles.forEach((famille) => {
+    const titre = document.createElement("h3");
+    titre.className = "succes-famille";
+    titre.textContent = famille;
+    zone.appendChild(titre);
+
+    const grille = document.createElement("div");
+    grille.className = "succes-grille";
+
+    SUCCES.filter((x) => x.famille === famille).forEach((x) => {
+      const valeur = x.mesure(b);
+      const acquis = valeur >= x.cible;
+      const part   = Math.min(100, Math.round((valeur / x.cible) * 100));
+
+      const el = document.createElement("article");
+      el.className = "succes" + (acquis ? " est-acquis" : "");
+      el.innerHTML = `
+        <div class="succes-tete">
+          <span class="succes-titre">${escapeHtml(x.titre)}</span>
+          ${acquis ? `<svg class="succes-coche" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg>` : ""}
+        </div>
+        <p class="succes-desc">${escapeHtml(x.desc)}</p>
+        <div class="succes-barre"><span style="width:${part}%"></span></div>
+        <p class="succes-compte">${nombreCourt(Math.min(valeur, x.cible))} / ${nombreCourt(x.cible)}${
+          x.besoinGenres && manquantes ? " · incomplet" : ""}</p>`;
+      grille.appendChild(el);
+    });
+
+    zone.appendChild(grille);
+  });
+}
+
+/* Rattrapage des genres : on redemande à AniList, par paquets d'identifiants,
+   ce que le site ne conservait pas à l'époque. Une seule fois. */
+$("rattrapage-lancer").addEventListener("click", async () => {
+  const manquantes = sansGenres();
+  if (!manquantes.length || !currentUser) return;
+
+  const bouton = $("rattrapage-lancer");
+  bouton.disabled = true;
+
+  try {
+    for (let i = 0; i < manquantes.length; i += 50) {
+      const paquet = manquantes.slice(i, i + 50);
+      bouton.textContent = `Analyse… ${Math.min(i + 50, manquantes.length)} / ${manquantes.length}`;
+
+      const d = await anilist(
+        `query ($ids: [Int]) { Page(perPage: 50) { media(id_in: $ids, type: ANIME) { id genres format } } }`,
+        { ids: paquet.map((s) => Number(s.id)).filter(Boolean) });
+
+      const trouves = new Map((d.Page?.media || []).map((m) => [String(m.id), m]));
+      const lot = writeBatch(db);
+
+      paquet.forEach((s) => {
+        const m = trouves.get(s.id);
+        lot.set(doc(db, "users", currentUser.uid, "animes", s.id), {
+          // Un tableau vide reste une réponse : sans lui, la série serait
+          // réanalysée à chaque passage.
+          genres: (m?.genres || []).slice(0, 12),
+          format: (m?.format || "").slice(0, 20)
+        }, { merge: true });
+      });
+      await lot.commit();
+
+      if (i + 50 < manquantes.length) await pause(1500);
+    }
+    toast("Ta liste est complétée.");
+  } catch (err) {
+    console.error("Rattrapage :", err.code, err.message);
+    toast("L'analyse s'est interrompue. Relance-la, elle reprendra où elle en est.");
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = "Compléter ma liste";
+    afficherSucces();
+  }
+});
+
+$("succes-connexion").addEventListener("click", () =>
+  ouvrirConnexion("Crée un compte pour suivre tes succès.", "signup"));
 
 /* ══════════════════ Profils publics ══════════════════
 
@@ -1756,6 +1923,7 @@ const CHAMPS_IMPORT = `
   coverImage { large }
   episodes
   format
+  genres
   seasonYear
 `;
 
@@ -2262,7 +2430,9 @@ $("import-valider").addEventListener("click", async () => {
       episodes,
       vus: statut === "termine" ? episodes : 0,
       statut,
-      addedAt: instant + rangEntree
+      addedAt: instant + rangEntree,
+      genres: (m.genres || []).slice(0, 12),
+      format: (m.format || "").slice(0, 20)
     };
 
     // La note accompagne la série : elle reste personnelle et n'entre dans
@@ -2390,7 +2560,11 @@ $("fiche-ajouter").addEventListener("click", async () => {
       id: a.id, title: a.title, cover: a.cover,
       episodes: a.episodes || 0, vus: 0,
       statut: a.statutDiff === "NOT_YET_RELEASED" ? "a_voir" : "en_cours",
-      addedAt: Date.now()
+      addedAt: Date.now(),
+      // Conservés pour les succès : les redemander série par série coûterait
+      // une requête réseau par jaquette.
+      genres: (a.genres || []).slice(0, 12),
+      format: (a.format || "").slice(0, 20)
     });
     toast(`${a.title} est dans ta liste.`);
   } catch (err) {
