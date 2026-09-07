@@ -286,7 +286,19 @@ button, input { font: inherit; color: inherit; }
   color: var(--muted); font-weight: 700; font-size: 1.1rem;
 }
 
-.profil-carte-nom { font-weight: 600; }
+.profil-carte-nom {
+  font-weight: 600;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+
+.profil-carte.est-moi { border-color: rgba(70, 212, 200, 0.4); }
+
+.profil-moi {
+  font-size: 0.68rem; font-weight: 500; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--accent);
+  border: 1px solid rgba(70, 212, 200, 0.4); border-radius: 999px;
+  padding: 2px 8px;
+}
 
 .profil-carte-stats {
   display: flex; flex-wrap: wrap; gap: 4px 12px;

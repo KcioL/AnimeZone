@@ -1105,18 +1105,25 @@ function afficherProfils() {
   const zone = $("profils-liste");
   zone.innerHTML = "";
 
+  const moi    = profilsCache.find((p) => p.uid === currentUser?.uid);
   const autres = profilsCache.filter((p) => p.uid !== currentUser?.uid);
 
   $("profils-note").textContent = autres.length
     ? (autres.length > 1
         ? `${autres.length} membres partagent leur liste.`
         : "1 membre partage sa liste.")
-    : "Personne n'a encore publié son profil. Sois le premier.";
+    : "Personne d'autre n'a encore publié son profil.";
 
-  autres.forEach((p) => {
+  /* Ton propre profil figure dans la liste, en tête et signalé comme tien.
+     Le masquer t'empêchait de vérifier ce que les autres voient de toi —
+     et c'est précisément ce qu'on veut regarder après avoir publié. */
+  const aAfficher = moi ? [moi, ...autres] : autres;
+
+  aAfficher.forEach((p) => {
+    const estMoi = p.uid === currentUser?.uid;
     const el = document.createElement("button");
     el.type = "button";
-    el.className = "profil-carte";
+    el.className = "profil-carte" + (estMoi ? " est-moi" : "");
 
     const avatar = p.avatar && AVATARS.includes(p.avatar)
       ? `<img class="profil-carte-avatar" src="${cheminAvatar(p.avatar)}" alt="" loading="lazy">`
@@ -1124,7 +1131,8 @@ function afficherProfils() {
 
     el.innerHTML = `
       ${avatar}
-      <span class="profil-carte-nom">${escapeHtml(p.pseudo || "membre")}</span>
+      <span class="profil-carte-nom">${escapeHtml(p.pseudo || "membre")}${
+        estMoi ? `<span class="profil-moi">ton profil</span>` : ""}</span>
       <span class="profil-carte-stats">
         <span><strong>${p.series || 0}</strong> séries</span>
         <span><strong>${nombreCourt(p.episodes || 0)}</strong> épisodes</span>
