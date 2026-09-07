@@ -801,12 +801,19 @@ button, input { font: inherit; color: inherit; }
 
 .filtres { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
 
-.filtre {
+/* Les filtres d'un profil consulté sont volontairement une classe distincte —
+   ils ne doivent pas hériter de l'écouteur qui pilote ta propre liste — mais
+   ils partagent la même apparence. Sans ces sélecteurs, ils retombaient sur le
+   bouton gris par défaut du navigateur, illisible sur fond sombre. */
+.filtre, .filtre-profil {
   background: none; border: 1px solid var(--line); border-radius: 999px;
-  padding: 7px 16px; color: var(--muted); cursor: pointer; font-size: 0.88rem;
+  padding: 7px 16px; color: var(--muted); cursor: pointer;
+  font: inherit; font-size: 0.88rem;
+  touch-action: manipulation;
 }
-.filtre:hover { border-color: var(--muted); color: var(--text); }
-.filtre.is-active {
+.filtre:hover, .filtre-profil:hover { border-color: var(--muted); color: var(--text); }
+
+.filtre.is-active, .filtre-profil.is-active {
   background: var(--accent); border-color: var(--accent);
   color: #08131A; font-weight: 600;
 }
