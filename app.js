@@ -1149,16 +1149,23 @@ $("supprimer-valider").addEventListener("click", async () => {
    ════════════════════════════════════════════ */
 
 const SUCCES = [
-  { famille: "Parcours", titre: "Premiers pas",        desc: "Terminer une première série",        cible: 1,    mesure: (b) => b.termines },
-  { famille: "Parcours", titre: "Habitué",             desc: "Terminer 10 séries",                 cible: 10,   mesure: (b) => b.termines },
-  { famille: "Parcours", titre: "Vétéran",             desc: "Terminer 50 séries",                 cible: 50,   mesure: (b) => b.termines },
-  { famille: "Parcours", titre: "Bibliothèque vivante",desc: "Terminer 150 séries",                cible: 150,  mesure: (b) => b.termines },
-  { famille: "Parcours", titre: "Sans fin",            desc: "Terminer 300 séries",                cible: 300,  mesure: (b) => b.termines },
+  { famille: "Parcours", titre: "Premiers pas",         desc: "Terminer une première série", cible: 1,    mesure: (b) => b.termines },
+  { famille: "Parcours", titre: "Habitué",              desc: "Terminer 10 séries",          cible: 10,   mesure: (b) => b.termines },
+  { famille: "Parcours", titre: "Vétéran",              desc: "Terminer 50 séries",          cible: 50,   mesure: (b) => b.termines },
+  { famille: "Parcours", titre: "Bibliothèque vivante", desc: "Terminer 150 séries",         cible: 150,  mesure: (b) => b.termines },
+  { famille: "Parcours", titre: "Grand collectionneur", desc: "Terminer 300 séries",         cible: 300,  mesure: (b) => b.termines },
+  { famille: "Parcours", titre: "Encyclopédie",         desc: "Terminer 500 séries",         cible: 500,  mesure: (b) => b.termines },
+  { famille: "Parcours", titre: "Conservateur",         desc: "Terminer 750 séries",         cible: 750,  mesure: (b) => b.termines },
+  { famille: "Parcours", titre: "Les mille",            desc: "Terminer 1 000 séries",       cible: 1000, mesure: (b) => b.termines },
 
-  { famille: "Temps passé", titre: "Cent épisodes",    desc: "Voir 100 épisodes",                  cible: 100,  mesure: (b) => b.episodes },
-  { famille: "Temps passé", titre: "Marathonien",      desc: "Voir 1 000 épisodes",                cible: 1000, mesure: (b) => b.episodes },
-  { famille: "Temps passé", titre: "Insomniaque",      desc: "Voir 3 000 épisodes",                cible: 3000, mesure: (b) => b.episodes },
-  { famille: "Temps passé", titre: "Longue haleine",   desc: "Terminer une série de 100 épisodes ou plus", cible: 1, mesure: (b) => b.fleuve },
+  { famille: "Temps passé", titre: "Cent épisodes",     desc: "Voir 100 épisodes",           cible: 100,   mesure: (b) => b.episodes },
+  { famille: "Temps passé", titre: "Habitude prise",    desc: "Voir 500 épisodes",           cible: 500,   mesure: (b) => b.episodes },
+  { famille: "Temps passé", titre: "Marathonien",       desc: "Voir 1 000 épisodes",         cible: 1000,  mesure: (b) => b.episodes },
+  { famille: "Temps passé", titre: "Insomniaque",       desc: "Voir 2 500 épisodes",         cible: 2500,  mesure: (b) => b.episodes },
+  { famille: "Temps passé", titre: "Increvable",        desc: "Voir 5 000 épisodes",         cible: 5000,  mesure: (b) => b.episodes },
+  { famille: "Temps passé", titre: "Sans relâche",      desc: "Voir 7 500 épisodes",         cible: 7500,  mesure: (b) => b.episodes },
+  { famille: "Temps passé", titre: "Dix mille",         desc: "Voir 10 000 épisodes",        cible: 10000, mesure: (b) => b.episodes },
+  { famille: "Temps passé", titre: "Longue haleine",    desc: "Terminer une série de 100 épisodes ou plus", cible: 1, mesure: (b) => b.fleuve },
 
   { famille: "Curiosité", titre: "Éclectique",         desc: "Avoir vu 5 genres différents",       cible: 5,    mesure: (b) => b.genres.size, besoinGenres: true },
   { famille: "Curiosité", titre: "Touche-à-tout",      desc: "Avoir vu 10 genres différents",      cible: 10,   mesure: (b) => b.genres.size, besoinGenres: true },
@@ -1172,6 +1179,11 @@ const SUCCES = [
   { famille: "Tenue de liste", titre: "Exigeant",      desc: "Mettre la note maximale à 10 séries", cible: 10,  mesure: (b) => b.parfaites },
   { famille: "Tenue de liste", titre: "Sur tous les fronts", desc: "Suivre 5 séries en cours en même temps", cible: 5, mesure: (b) => b.enCours }
 ];
+
+/* Un palier se lit en entier : « 330 / 1 000 » dit ce qu'il reste à faire,
+   « 330 / 1,0 k » oblige à convertir de tête. L'espace insécable évite que le
+   nombre se coupe en fin de ligne. */
+const chiffre = (n) => n.toLocaleString("fr-FR").replace(/\u202F|\u00A0/g, "\u00A0");
 
 function bilanSucces() {
   const genres = new Set();
@@ -1244,7 +1256,7 @@ function afficherSucces() {
         </div>
         <p class="succes-desc">${escapeHtml(x.desc)}</p>
         <div class="succes-barre"><span style="width:${part}%"></span></div>
-        <p class="succes-compte">${nombreCourt(Math.min(valeur, x.cible))} / ${nombreCourt(x.cible)}${
+        <p class="succes-compte">${chiffre(Math.min(valeur, x.cible))} / ${chiffre(x.cible)}${
           x.besoinGenres && manquantes ? " · incomplet" : ""}</p>`;
       grille.appendChild(el);
     });

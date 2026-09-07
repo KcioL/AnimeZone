@@ -1,8 +1,8 @@
 /* Service worker d'AnimeZone.
 
-   Même stratégie que MangaZone, corrigée : le code du site passe par le
-   réseau d'abord, pour qu'une mise en ligne s'applique immédiatement. Les
-   images et bibliothèques versionnées restent en cache. */
+   Le code du site passe par le réseau d'abord, pour qu'une mise en ligne
+   s'applique immédiatement. Les images et les bibliothèques versionnées
+   restent en cache. */
 
 const VERSION = "animezone-v9";
 

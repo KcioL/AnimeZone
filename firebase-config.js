@@ -1,5 +1,4 @@
 // Configuration du projet Firebase « animezone-8d2f5 ».
-// Projet distinct de MangaZone : les comptes ne sont donc pas communs.
 // Ces valeurs sont des identifiants publics, pas des secrets — c'est
 // firestore.rules qui protège les données.
 
