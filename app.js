@@ -518,8 +518,18 @@ document.querySelectorAll("[data-vue]").forEach((btn) => {
 $("fiche-retour").addEventListener("click", () => showView(vuePrecedente));
 
 let vuePrecedente = "avenir";
+let vueAffichee   = "avenir";
+
+/* Position de défilement de chaque vue. Ouvrir une série depuis le bas d'une
+   liste de trois cents jaquettes puis revenir tout en haut oblige à refaire
+   tout le chemin — et à retrouver de mémoire où l'on en était. */
+const defilements = {};
 
 function showView(nom) {
+  // On note où l'on en était avant de quitter la vue courante.
+  if (vueAffichee) defilements[vueAffichee] = window.scrollY;
+  vueAffichee = nom;
+
   if (nom !== "fiche" && nom !== "profil") vuePrecedente = nom;
 
   $("view-avenir").hidden    = nom !== "avenir";
@@ -545,7 +555,13 @@ function showView(nom) {
   document.querySelector(".barre-basse")?.style.setProperty("--onglet", rang);
 
   if (nom !== "fiche") ficheCourante = null;
-  window.scrollTo(0, 0);
+
+  /* Une fiche ou un profil qu'on vient d'ouvrir commence en haut : c'est un
+     contenu neuf. Une liste retrouvée reprend là où on l'avait laissée.
+     Le report à la trame suivante laisse au navigateur le temps de calculer
+     la hauteur de la grille qu'on vient de réafficher. */
+  const cible = (nom === "fiche" || nom === "profil") ? 0 : (defilements[nom] || 0);
+  requestAnimationFrame(() => window.scrollTo(0, cible));
 }
 
 /* ══════════════════ À venir ══════════════════ */
