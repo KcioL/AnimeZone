@@ -5,7 +5,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, getDoc, setDoc, deleteDoc, updateDoc, deleteField, writeBatch,
+  collection, doc, getDoc, getDocs, setDoc, deleteDoc, updateDoc, deleteField, writeBatch,
   onSnapshot, query, orderBy
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
@@ -52,6 +52,7 @@ const CHAMPS = `
   startDate { year month day }
   nextAiringEpisode { episode airingAt timeUntilAiring }
   studios(isMain: true) { nodes { name } }
+  externalLinks { url site type language isDisabled }
 `;
 
 /* AniList limite le rythme des appels et répond 429 quand on le dépasse.
@@ -101,8 +102,29 @@ const normaliser = (m) => ({
   favoris:   m.favourites || 0,
   debut:     m.startDate || null,
   prochain:  m.nextAiringEpisode || null,
-  studio:    m.studios?.nodes?.[0]?.name || ""
+  studio:    m.studios?.nodes?.[0]?.name || "",
+  liens:     plateformes(m.externalLinks)
 });
+
+/* AniList référence les liens externes d'une série : sites officiels, réseaux,
+   et plateformes de diffusion. On ne garde que ces dernières.
+
+   Le champ « language » dit dans quelle langue est le service — « French »
+   pour ADN, pour la page française de Crunchyroll. Il ne dit pas si la série
+   y est doublée ou sous-titrée : cette information n'existe nulle part dans
+   l'API. On annonce donc « disponible en français », ce qui est vrai, plutôt
+   que « VF » ou « VOSTFR », ce qu'on ne sait pas. */
+function plateformes(liens) {
+  return (liens || [])
+    .filter((l) => l.type === "STREAMING" && !l.isDisabled && l.url)
+    .map((l) => ({
+      url:  l.url,
+      site: l.site || "Plateforme",
+      fr:   /fran[çc]ais|french/i.test(l.language || "")
+    }))
+    // Les services francophones d'abord : c'est ce qu'on cherche ici.
+    .sort((a, b) => Number(b.fr) - Number(a.fr));
+}
 
 /* Les genres et les étiquettes sont deux systèmes distincts chez AniList.
    Isekai, School ou Time Loop sont des étiquettes, pas des genres : les
@@ -231,6 +253,7 @@ onAuthStateChanged(auth, async (user) => {
     montrerAvatar(null);
     if (unsubscribe) { unsubscribe(); unsubscribe = null; }
     listeCache = [];
+    profilsCharges = false;
     if (ficheCourante) majFiche();
     rafraichirCartes();
     return;
@@ -246,6 +269,7 @@ onAuthStateChanged(auth, async (user) => {
       if (profil.data().pseudo) $("user-email").textContent = profil.data().pseudo;
       montrerAvatar(profil.data().avatar);
     }
+    chargerEtatPublication();
   } catch { /* le profil n'est pas indispensable à l'affichage */ }
 });
 
@@ -494,15 +518,18 @@ $("fiche-retour").addEventListener("click", () => showView(vuePrecedente));
 let vuePrecedente = "avenir";
 
 function showView(nom) {
-  if (nom !== "fiche") vuePrecedente = nom;
+  if (nom !== "fiche" && nom !== "profil") vuePrecedente = nom;
 
   $("view-avenir").hidden    = nom !== "avenir";
   $("view-decouvrir").hidden = nom !== "decouvrir";
+  $("view-profils").hidden   = nom !== "profils";
+  $("view-profil").hidden    = nom !== "profil";
   $("view-liste").hidden     = nom !== "liste";
   $("view-fiche").hidden     = nom !== "fiche";
 
-  // La fiche n'a pas d'onglet : on garde en surbrillance celui d'où l'on vient.
-  const onglet = nom === "fiche" ? vuePrecedente : nom;
+  /* Ni la fiche ni le profil d'un membre n'ont d'onglet à eux : on garde en
+     surbrillance celui d'où l'on vient. */
+  const onglet = (nom === "fiche" || nom === "profil") ? vuePrecedente : nom;
 
   document.querySelectorAll("[data-vue]").forEach((btn) => {
     const actif = btn.dataset.vue === onglet;
@@ -510,7 +537,9 @@ function showView(nom) {
     btn.setAttribute("aria-current", actif ? "page" : "false");
   });
 
-  const rang = ["avenir", "decouvrir", "liste"].indexOf(onglet);
+  if (nom === "profils") chargerProfils();
+
+  const rang = ["avenir", "decouvrir", "profils", "liste"].indexOf(onglet);
   document.querySelector(".barre-basse")?.style.setProperty("--onglet", rang);
 
   if (nom !== "fiche") ficheCourante = null;
@@ -695,6 +724,8 @@ document.addEventListener("click", async (ev) => {
   const el = ev.target.closest?.(".carte");
   if (!el) return;
 
+  if (el.__apercu) return ouvrirApercu(el.__apercu);
+
   const suivi = el.__suivi;
   if (suivi) {
     /* On ouvre immédiatement avec ce que la liste contient déjà — titre,
@@ -733,6 +764,8 @@ function suivreListe(uid) {
     afficherListe();
     if (ficheCourante) majFiche();
     rafraichirCartes();
+    majPublication();
+    planifierVitrine();   // les compteurs publiés suivent la liste
   }, (err) => {
     console.error("Firestore :", err.code, err.message);
     $("loading").textContent = "Impossible de lire ta liste. Vérifie les règles Firestore.";
@@ -826,6 +859,275 @@ function rafraichirCartes() {
     }
   });
 }
+
+/* ══════════════════ Profils publics ══════════════════
+
+   Publier son profil est un choix explicite, et réversible d'un geste.
+   Ce que ça expose, littéralement : le pseudo, l'avatar, les compteurs, et la
+   liste des séries avec les notes. Rien d'autre — ni adresse e-mail, ni date
+   d'inscription, ni les séries abandonnées en silence, puisque tout est dans
+   la même liste. C'est dit en clair dans l'interface avant de publier.
+
+   Le mécanisme tient en une phrase : l'existence d'un document dans
+   « profilsPublics » vaut autorisation de lecture sur la liste. Les règles
+   Firestore la vérifient à chaque requête. Retirer le document referme donc
+   la liste dans la seconde, sans avoir à toucher aux séries elles-mêmes.
+   ═════════════════════════════════════════════════════ */
+
+let profilPublic   = false;     // mon profil est-il publié ?
+let profilsCache   = [];
+let profilsCharges = false;
+let profilVu       = null;      // profil consulté : { uid, pseudo, avatar, series }
+let filtreProfil   = "tous";
+let minuteurVitrine;
+
+const compteurs = (liste) => ({
+  series:   liste.length,
+  episodes: liste.reduce((n, s) => n + (s.vus || 0), 0),
+  termines: liste.filter((s) => s.statut === "termine").length
+});
+
+async function chargerEtatPublication() {
+  profilPublic = false;
+  if (!currentUser) return majPublication();
+  try {
+    profilPublic = (await getDoc(doc(db, "profilsPublics", currentUser.uid))).exists();
+  } catch (err) {
+    console.error("Profil public :", err.code);
+  }
+  majPublication();
+}
+
+function majPublication() {
+  const c = compteurs(listeCache);
+  $("publier").textContent = profilPublic ? "Rendre privé" : "Publier mon profil";
+  $("publication-etat").textContent = profilPublic
+    ? `Visible par les membres : ton pseudo, ton avatar, tes ${c.series} séries et tes notes.`
+    : "Ton profil est privé. Personne ne voit ta liste ni tes notes.";
+}
+
+/* La vitrine recopie des compteurs déjà calculés côté client : les règles
+   n'acceptent que des nombres, donc rien qui puisse servir à afficher un
+   texte arbitraire sur une page vue par tout le monde. */
+async function ecrireVitrine() {
+  if (!currentUser || !profilPublic) return;
+
+  const c = compteurs(listeCache);
+  const data = {
+    pseudo: $("user-email").textContent || "membre",
+    ...c,
+    maj: Date.now()
+  };
+  const avatar = $("user-avatar").hidden ? null : $("user-avatar").src.split("/").pop().replace(".png", "");
+  if (avatar && AVATARS.includes(avatar)) data.avatar = avatar;
+
+  try { await setDoc(doc(db, "profilsPublics", currentUser.uid), data); }
+  catch (err) { console.error("Vitrine :", err.code, err.message); }
+}
+
+/* La liste bouge à chaque épisode coché. On ne réécrit pas la vitrine à chaque
+   fois : on attend que ça se calme. */
+function planifierVitrine() {
+  if (!profilPublic) return;
+  clearTimeout(minuteurVitrine);
+  minuteurVitrine = setTimeout(ecrireVitrine, 4000);
+}
+
+$("publier").addEventListener("click", async () => {
+  if (!currentUser) return ouvrirConnexion("Crée un compte pour publier ton profil.", "signup");
+
+  $("publier").disabled = true;
+  try {
+    if (profilPublic) {
+      await deleteDoc(doc(db, "profilsPublics", currentUser.uid));
+      profilPublic = false;
+      toast("Ton profil est redevenu privé.");
+    } else {
+      profilPublic = true;
+      await ecrireVitrine();
+      toast("Ton profil est publié.");
+    }
+    majPublication();
+    profilsCharges = false;
+    chargerProfils();
+  } catch (err) {
+    console.error("Publication :", err.code, err.message);
+    profilPublic = !profilPublic;
+    toast("L'opération a échoué.");
+  } finally {
+    $("publier").disabled = false;
+  }
+});
+
+$("profils-connexion").addEventListener("click", () =>
+  ouvrirConnexion("Crée un compte pour voir les profils.", "signup"));
+
+async function chargerProfils() {
+  $("profils-invite").hidden  = !!currentUser;
+  $("profils-contenu").hidden = !currentUser;
+  if (!currentUser || profilsCharges) return;
+
+  profilsCharges = true;
+  $("profils-note").textContent = "Chargement…";
+
+  try {
+    const snap = await getDocs(collection(db, "profilsPublics"));
+    profilsCache = snap.docs.map((d) => ({ uid: d.id, ...d.data() }))
+      .sort((a, b) => (b.series || 0) - (a.series || 0));
+    afficherProfils();
+  } catch (err) {
+    console.error("Profils :", err.code, err.message);
+    profilsCharges = false;
+    $("profils-note").textContent = "Impossible de charger les profils pour l'instant.";
+  }
+}
+
+function afficherProfils() {
+  const zone = $("profils-liste");
+  zone.innerHTML = "";
+
+  const autres = profilsCache.filter((p) => p.uid !== currentUser?.uid);
+
+  $("profils-note").textContent = autres.length
+    ? (autres.length > 1
+        ? `${autres.length} membres partagent leur liste.`
+        : "1 membre partage sa liste.")
+    : "Personne n'a encore publié son profil. Sois le premier.";
+
+  autres.forEach((p) => {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "profil-carte";
+
+    const avatar = p.avatar && AVATARS.includes(p.avatar)
+      ? `<img class="profil-carte-avatar" src="${cheminAvatar(p.avatar)}" alt="" loading="lazy">`
+      : `<span class="profil-carte-avatar profil-carte-vide">${escapeHtml(initiales(p.pseudo))}</span>`;
+
+    el.innerHTML = `
+      ${avatar}
+      <span class="profil-carte-nom">${escapeHtml(p.pseudo || "membre")}</span>
+      <span class="profil-carte-stats">
+        <span><strong>${p.series || 0}</strong> séries</span>
+        <span><strong>${nombreCourt(p.episodes || 0)}</strong> épisodes</span>
+        <span><strong>${p.termines || 0}</strong> terminées</span>
+      </span>`;
+
+    el.addEventListener("click", () => ouvrirProfil(p));
+    zone.appendChild(el);
+  });
+}
+
+
+/* Aperçu d'une série hors AniList : ce que le membre a saisi, et rien de plus.
+   Pas de résumé à inventer, pas de bouton qui ne mènerait nulle part. */
+function ouvrirApercu(s) {
+  $("apercu-titre").textContent = s.title;
+
+  const avecImage = !!s.cover;
+  $("apercu-image").hidden = !avecImage;
+  $("apercu-vide").hidden  = avecImage;
+  if (avecImage) $("apercu-image").src = s.cover;
+  else $("apercu-vide").textContent = initiales(s.title);
+
+  $("apercu-statut").textContent = LIBELLE_STATUT[s.statut] || "—";
+
+  const vus = s.vus || 0;
+  $("apercu-episodes").textContent = s.episodes
+    ? `${vus} vus sur ${s.episodes}`
+    : (vus ? `${vus} vus, total inconnu` : "Non renseigné");
+
+  $("apercu-note").textContent = texteNote(s) || "Pas de note";
+
+  $("apercu-screen").hidden = false;
+}
+
+const fermerApercu = () => { $("apercu-screen").hidden = true; };
+
+$("apercu-fermer").addEventListener("click", fermerApercu);
+$("apercu-ok").addEventListener("click", fermerApercu);
+$("apercu-screen").addEventListener("click", (e) => {
+  if (e.target === $("apercu-screen")) fermerApercu();
+});
+addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("apercu-screen").hidden) fermerApercu();
+});
+
+async function ouvrirProfil(p) {
+  profilVu = { ...p, series_liste: null };
+  filtreProfil = "tous";
+
+  $("profil-pseudo").textContent = p.pseudo || "membre";
+  $("profil-avatar").hidden = !(p.avatar && AVATARS.includes(p.avatar));
+  if (!$("profil-avatar").hidden) $("profil-avatar").src = cheminAvatar(p.avatar);
+
+  $("profil-stats").innerHTML = `
+    <p><strong>${p.series || 0}</strong> séries suivies</p>
+    <p><strong>${nombreCourt(p.episodes || 0)}</strong> épisodes vus</p>
+    <p><strong>${p.termines || 0}</strong> terminées</p>`;
+
+  document.querySelectorAll(".filtre-profil").forEach((b) =>
+    b.classList.toggle("is-active", b.dataset.statut === "tous"));
+
+  $("profil-liste").innerHTML = `<p class="loading">Chargement de la liste…</p>`;
+  $("profil-vide").hidden = true;
+  showView("profil");
+
+  try {
+    const snap = await getDocs(collection(db, "users", p.uid, "animes"));
+    if (profilVu?.uid !== p.uid) return;         // parti ailleurs entre-temps
+    profilVu.series_liste = snap.docs.map((d) => d.data())
+      .sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+    afficherListeProfil();
+  } catch (err) {
+    console.error("Liste du profil :", err.code, err.message);
+    $("profil-liste").innerHTML =
+      `<p class="empty-state">Cette liste n'est plus accessible. Le profil est peut-être redevenu privé.</p>`;
+  }
+}
+
+function afficherListeProfil() {
+  const zone = $("profil-liste");
+  const toutes = profilVu?.series_liste || [];
+  const vues = filtreProfil === "tous" ? toutes : toutes.filter((s) => s.statut === filtreProfil);
+
+  zone.innerHTML = "";
+  $("profil-vide").hidden = vues.length > 0;
+
+  vues.forEach((s) => {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "carte";
+    el.innerHTML = `
+      <span class="carte-img">
+        ${jaquette(s.cover, s.title)}
+        ${s.statut === "termine" ? `<span class="carte-bandeau">Terminé</span>` : ""}
+      </span>
+      <span class="carte-nom">${escapeHtml(s.title)}</span>
+      <span class="carte-bas">
+        <span class="carte-meta">${LIBELLE_STATUT[s.statut] || ""}</span>
+        <span class="carte-note">${texteNote(s)}</span>
+      </span>`;
+
+    /* Une série d'un autre membre garde son identifiant AniList : on ouvre sa
+       vraie fiche. Une série qu'il a saisie à la main n'existe que chez lui,
+       mais elle reste une série de sa liste : elle ouvre un aperçu réduit
+       plutôt que de rester inerte au milieu de cartes qui, elles, réagissent. */
+    if (estLocale(s.id)) el.__apercu = s;
+    else el.__suivi = s;
+    zone.appendChild(el);
+  });
+}
+
+document.querySelectorAll(".filtre-profil").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    filtreProfil = btn.dataset.statut;
+    document.querySelectorAll(".filtre-profil").forEach((b) =>
+      b.classList.toggle("is-active", b === btn));
+    afficherListeProfil();
+  });
+});
+
+$("profil-retour").addEventListener("click", () => showView("profils"));
 
 /* ══════════════════ Séries saisies à la main ══════════════════
 
@@ -1751,6 +2053,7 @@ function majFiche() {
 
   $("fiche-resume").textContent = a.resume || "";
 
+  afficherPlateformes(a.liens);
   afficherNotePerso(suivi);
   $("fiche-modifier").hidden = !suivi;
 
@@ -1881,6 +2184,31 @@ const texteNote = (s) => (s && s.note ? `${s.note}/${s.sur || 10}` : "");
 /* Dernière échelle utilisée, retenue le temps de la session : qui note sur 20
    note sur 20 pour toutes ses séries, et n'a pas à le redire à chaque fiche. */
 let echellePreferee = 20;
+
+function afficherPlateformes(liens) {
+  const bloc = $("fiche-plateformes");
+  bloc.hidden = !liens?.length;
+  if (bloc.hidden) return;
+
+  const zone = $("fiche-liens");
+  zone.innerHTML = "";
+
+  liens.forEach((l) => {
+    const a = document.createElement("a");
+    a.className = "plateforme" + (l.fr ? " est-fr" : "");
+    a.href = l.url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.innerHTML = `<span>${escapeHtml(l.site)}</span>` +
+      (l.fr ? `<span class="plateforme-fr">français</span>` : "");
+    zone.appendChild(a);
+  });
+
+  const enFrancais = liens.filter((l) => l.fr).length;
+  $("plateformes-note").textContent = enFrancais
+    ? "Les plateformes marquées « français » proposent la série en français, sans qu'AniList précise s'il s'agit de la VF ou de la VOSTFR."
+    : "Aucune plateforme francophone référencée pour cette série. Ces liens sont tenus par la communauté AniList et peuvent être incomplets.";
+}
 
 function afficherNotePerso(suivi) {
   const bloc = $("fiche-note-bloc");

@@ -232,6 +232,34 @@
     </div>
   </div>
 
+  <!-- ══ Aperçu d'une série hors AniList ══ -->
+  <div id="apercu-screen" class="import-screen" hidden role="dialog" aria-modal="true" aria-labelledby="apercu-titre">
+    <div class="import-box apercu-box">
+      <button type="button" id="apercu-fermer" class="auth-fermer" aria-label="Fermer">×</button>
+      <p class="auth-titre" id="apercu-titre"></p>
+
+      <div class="apercu-corps">
+        <img id="apercu-image" class="apercu-image" alt="" hidden>
+        <span id="apercu-vide" class="apercu-image apercu-vide" aria-hidden="true"></span>
+
+        <dl class="apercu-infos">
+          <div><dt>Statut</dt><dd id="apercu-statut"></dd></div>
+          <div><dt>Épisodes</dt><dd id="apercu-episodes"></dd></div>
+          <div><dt>Sa note</dt><dd id="apercu-note"></dd></div>
+        </dl>
+      </div>
+
+      <p class="field-hint apercu-mention">
+        Cette série a été ajoutée à la main par ce membre : elle ne figure pas
+        dans la base d'AniList, il n'y a donc ni résumé ni fiche détaillée.
+      </p>
+
+      <div class="import-pied">
+        <button type="button" id="apercu-ok" class="btn-primary">Fermer</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ══ Application ══ -->
   <div id="app-screen" hidden>
     <header class="topbar">
@@ -251,6 +279,14 @@
             <path d="M15.5 8.5 L10.5 10.5 L8.5 15.5 L13.5 13.5 Z"/>
           </svg>
           <span>Découvrir</span>
+        </button>
+        <button type="button" class="tab" data-vue="profils">
+          <svg class="tab-icone" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="9" cy="8" r="3.4"/>
+            <path d="M3.5 20c0-3.3 2.5-5.4 5.5-5.4s5.5 2.1 5.5 5.4"/>
+            <path d="M16.5 6.2a3.4 3.4 0 0 1 0 6.4M17 14.9c2.2.5 3.5 2.4 3.5 5.1"/>
+          </svg>
+          <span>Profils</span>
         </button>
         <button type="button" class="tab" data-vue="liste">
           <svg class="tab-icone" viewBox="0 0 24 24" aria-hidden="true">
@@ -336,6 +372,54 @@
         </div>
       </section>
 
+      <!-- ── Profils ── -->
+      <section id="view-profils" hidden>
+        <div id="profils-invite" class="invite" hidden>
+          <h2 class="section-title">Regarde ce que les autres ont vu</h2>
+          <p class="section-note">
+            Les membres qui le souhaitent publient leur liste et leurs notes.
+            Il faut un compte pour y accéder — et pour publier la tienne.
+          </p>
+          <button type="button" id="profils-connexion" class="btn-primary">Créer mon compte</button>
+        </div>
+
+        <div id="profils-contenu" hidden>
+          <div class="publication">
+            <div class="publication-texte">
+              <p class="publication-titre">Mon profil public</p>
+              <p class="section-note" id="publication-etat"></p>
+            </div>
+            <button type="button" id="publier" class="btn-ghost">Publier mon profil</button>
+          </div>
+
+          <h2 class="section-title">Profils publics</h2>
+          <p class="section-note" id="profils-note"></p>
+          <div id="profils-liste" class="profils"></div>
+        </div>
+      </section>
+
+      <!-- ── Profil d'un membre ── -->
+      <section id="view-profil" hidden>
+        <button type="button" id="profil-retour" class="btn-link back-link">Retour</button>
+
+        <div class="profil-tete">
+          <img id="profil-avatar" class="profil-avatar" alt="" hidden>
+          <div>
+            <h2 class="section-title" id="profil-pseudo"></h2>
+            <div class="stats" id="profil-stats"></div>
+          </div>
+        </div>
+
+        <div class="filtres" role="group" aria-label="Filtrer">
+          <button type="button" class="filtre-profil is-active" data-statut="tous">Tous</button>
+          <button type="button" class="filtre-profil" data-statut="en_cours">En cours</button>
+          <button type="button" class="filtre-profil" data-statut="termine">Terminés</button>
+        </div>
+
+        <div id="profil-liste" class="grille"></div>
+        <p id="profil-vide" class="empty-state" hidden>Cette liste est vide.</p>
+      </section>
+
       <!-- ── Fiche ── -->
       <section id="view-fiche" hidden>
         <button type="button" id="fiche-retour" class="btn-link back-link">Retour</button>
@@ -391,6 +475,12 @@
           <div class="note-choix" id="fiche-notes" role="group" aria-label="Noter cette série"></div>
         </div>
 
+        <section class="plateformes" id="fiche-plateformes" hidden>
+          <h3 class="plateformes-titre">Où la regarder</h3>
+          <div id="fiche-liens" class="plateformes-liste"></div>
+          <p class="field-hint" id="plateformes-note"></p>
+        </section>
+
         <p class="fiche-resume" id="fiche-resume"></p>
 
         <div class="danger" id="fiche-danger" hidden>
@@ -417,6 +507,15 @@
           <path d="M15.5 8.5 L10.5 10.5 L8.5 15.5 L13.5 13.5 Z"/>
         </svg>
         <span>Découvrir</span>
+      </button>
+
+      <button type="button" class="onglet-bas" data-vue="profils">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="9" cy="8" r="3.4"/>
+          <path d="M3.5 20c0-3.3 2.5-5.4 5.5-5.4s5.5 2.1 5.5 5.4"/>
+          <path d="M16.5 6.2a3.4 3.4 0 0 1 0 6.4M17 14.9c2.2.5 3.5 2.4 3.5 5.1"/>
+        </svg>
+        <span>Profils</span>
       </button>
 
       <button type="button" class="onglet-bas" data-vue="liste">
