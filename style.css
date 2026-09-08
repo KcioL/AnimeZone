@@ -1209,6 +1209,10 @@ button, input { font: inherit; color: inherit; }
   .tri-menu { left: 0; right: 0; min-width: 0; }
   .tri-option { padding: 12px; }
 
+  /* Pendant la saisie, la barre disparaît au lieu de flotter au milieu de
+     l'écran. Le champ actif reste visible, les résultats gagnent la place. */
+  body.clavier-ouvert .barre-basse { display: none; }
+
   /* Cinq onglets sur un écran de téléphone : les libellés rétrécissent
      plutôt que de se chevaucher. */
   .onglet-bas { font-size: 0.6rem; gap: 3px; }

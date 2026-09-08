@@ -553,8 +553,14 @@ function showView(nom) {
   if (nom === "profils") chargerProfils();
   if (nom === "succes")  afficherSucces();
 
-  const rang = ["avenir", "decouvrir", "profils", "liste", "succes"].indexOf(onglet);
-  document.querySelector(".barre-basse")?.style.setProperty("--onglet", rang);
+  /* L'ordre est lu dans la barre elle-même. Une liste écrite à la main finit
+     toujours par mentir : en insérant l'onglet Succès en troisième position
+     dans le HTML sans le déplacer dans la liste, le curseur se posait sur
+     « Ma liste » pendant qu'on ouvrait les succès. */
+  const barre = document.querySelector(".barre-basse");
+  const rang = [...(barre?.querySelectorAll(".onglet-bas") || [])]
+    .findIndex((b) => b.dataset.vue === onglet);
+  if (rang >= 0) barre.style.setProperty("--onglet", rang);
 
   if (nom !== "fiche") ficheCourante = null;
 
@@ -1135,6 +1141,30 @@ $("supprimer-valider").addEventListener("click", async () => {
     $("supprimer-valider").disabled = false;
     $("supprimer-valider").textContent = "Supprimer définitivement";
   }
+});
+
+
+/* Le clavier logiciel et la barre du bas ne s'entendent pas : iOS place les
+   éléments fixés par rapport à la fenêtre de mise en page, qui ne bouge pas
+   quand le clavier apparaît. La barre se retrouve alors flottante au milieu
+   de l'écran, immobile pendant qu'on fait défiler la page.
+
+   On l'escamote pendant la saisie. C'est aussi ce qu'on veut à ce moment-là :
+   la place gagnée sert à voir les résultats de la recherche. */
+const champDeSaisie = (el) =>
+  !!el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && el.type !== "checkbox";
+
+addEventListener("focusin", (e) => {
+  if (champDeSaisie(e.target)) document.body.classList.add("clavier-ouvert");
+});
+
+addEventListener("focusout", () => {
+  // Le temps que le focus passe d'un champ à l'autre sans faire clignoter la barre.
+  setTimeout(() => {
+    if (!champDeSaisie(document.activeElement)) {
+      document.body.classList.remove("clavier-ouvert");
+    }
+  }, 120);
 });
 
 /* ══════════════════ Succès ══════════════════
