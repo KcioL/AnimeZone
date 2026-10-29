@@ -570,6 +570,9 @@ function showView(nom) {
      la hauteur de la grille qu'on vient de réafficher. */
   const cible = (nom === "fiche" || nom === "profil") ? 0 : (defilements[nom] || 0);
   requestAnimationFrame(() => window.scrollTo(0, cible));
+
+  // Comptage des visites par onglet pour le tableau de bord (voir suivi.js)
+  window.suivi?.page(nom);
 }
 
 /* ══════════════════ À venir ══════════════════ */

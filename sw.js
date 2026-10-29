@@ -4,11 +4,11 @@
    s'applique immédiatement. Les images et les bibliothèques versionnées
    restent en cache. */
 
-const VERSION = "animezone-v9";
+const VERSION = "animezone-v10";
 
 const COQUE = [
   "./", "./index.html", "./style.css", "./app.js",
-  "./firebase-config.js", "./manifest.json"
+  "./firebase-config.js", "./manifest.json", "./suivi.js"
 ];
 
 self.addEventListener("install", (e) => {
