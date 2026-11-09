@@ -18,7 +18,9 @@
  *                                   systemes/<système>, navigateurs/<navigateur>,
  *                                   temps/<page>/{s,n} (secondes passées sur la page, nombre d'affichages),
  *                                   erreurs/<page>, bugs/<id> = { m: message, f: fichier, p, t },
- *                                   contenus/<type>/<id> (séries, recherches… consultées)
+ *                                   contenus/<type>/<id> (séries, recherches… consultées),
+ *                                   prives (visiteurs en navigation privée : ni « nouveaux » ni comptés dans le total,
+ *                                   puisque leur navigateur oublie qu'ils sont déjà venus)
  *   stats/<site>/mois/AAAA-MM       visiteurs
  *   stats/<site>/total              visiteurs, vues
  *   stats/<site>/noms/<type>/<id>   nom affiché d'un contenu
@@ -172,6 +174,38 @@
     return 'autre';
   }
 
+  // ---------- Navigation privée ----------
+  // Un navigateur en navigation privée oublie tout en se fermant : le visiteur reviendrait « nouveau » à
+  // chaque fois. On le repère (même méthode que la bibliothèque detectIncognito) pour ne pas le compter
+  // comme nouveau. Rien n'est envoyé d'autre qu'un compteur.
+  const estIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+  async function navigationPrivee() {
+    try {
+      const ua = navigator.userAgent || '';
+      const webkit = estIOS() || (/Safari/.test(ua) && !/Chrome|Chromium|Edg|OPR|Android|Firefox/.test(ua));
+      if (webkit) {
+        if (navigator.storage && navigator.storage.getDirectory) {
+          try { await navigator.storage.getDirectory(); return false; } catch (e) { return /unknown transient reason/i.test(String(e && e.message)); }
+        }
+        try { window.openDatabase(null, null, null, null); return false; } catch (e) { return true; }
+      }
+      if (/Firefox/.test(ua)) {
+        if (navigator.storage && navigator.storage.getDirectory) {
+          try { await navigator.storage.getDirectory(); return false; } catch (e) { return /security/i.test(String((e && (e.name + e.message)) || '')); }
+        }
+        return navigator.serviceWorker === undefined;
+      }
+      if (navigator.storage && navigator.storage.estimate) {
+        // Chrome, Edge, Samsung… : en navigation privée, la place de stockage permise est très petite
+        const { quota } = await navigator.storage.estimate();
+        const limite = (performance.memory && performance.memory.jsHeapSizeLimit) || 1073741824;
+        return typeof quota === 'number' && quota < limite * 2;
+      }
+    } catch (e) { /* rien */ }
+    return false;
+  }
+  const prive = navigationPrivee();
+
   // ---------- Visite (session) : une visite s'arrête après 30 minutes sans rien ----------
   function visiteEnCours() {
     try {
@@ -185,6 +219,9 @@
   function compter(page) {
     pageCourante = page;
     if (horsJeu()) return;
+    prive.then((enPrive) => compterVraiment(page, enPrive));
+  }
+  function compterVraiment(page, enPrive) {
     const memoire = stockage();
     if (!memoire) return;
 
@@ -195,7 +232,8 @@
     const maj = { [`${d}/vues`]: UN, [`${S}/total/vues`]: UN };
     const plus = {}; // compteurs ajoutés plus tard : envoyés à part (si la base n'a pas encore leurs règles, le reste compte quand même)
 
-    if (!memoire.vu) {
+    // navigation privée : le navigateur ne se souvient pas des visites d'avant, ce n'est pas forcément un nouveau
+    if (!memoire.vu && !enPrive) {
       maj[`${d}/nouveaux`] = UN;
       maj[`${S}/total/visiteurs`] = UN;
     }
@@ -207,6 +245,7 @@
       if (appli()) maj[`${d}/appli`] = UN;
       pages = [];
       plus[`${d}/systemes/${systeme()}`] = UN;
+      if (enPrive) plus[`${d}/prives`] = UN;
       plus[`${d}/navigateurs/${navigateur()}`] = UN;
       // visiteur déjà venu un autre jour : fidélité
       if (memoire.jour && /^\d{4}-\d{2}-\d{2}$/.test(memoire.jour)) {
