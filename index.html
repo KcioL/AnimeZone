@@ -361,6 +361,9 @@
         <span id="user-email" class="user-email" hidden></span>
         <button type="button" id="logout" class="btn-link" hidden>Se déconnecter</button>
         <button type="button" id="supprimer-compte" class="btn-compte-danger" hidden>Supprimer mon compte</button>
+        <button type="button" id="ouvrir-login" class="btn-ghost btn-compact" hidden>
+          Se connecter
+        </button>
         <button type="button" id="ouvrir-connexion" class="btn-primary btn-compact" hidden>
           Créer un compte
         </button>
@@ -402,7 +405,10 @@
             les séries et retrouver ta liste sur tous tes appareils. C'est gratuit
             et ça prend dix secondes.
           </p>
-          <button type="button" id="invite-connexion" class="btn-primary">Créer mon compte</button>
+          <div class="invite-boutons">
+            <button type="button" id="invite-connexion" class="btn-primary">Créer mon compte</button>
+            <button type="button" id="invite-login" class="btn-ghost">J'ai déjà un compte</button>
+          </div>
         </div>
 
         <div id="liste-contenu">
@@ -448,7 +454,10 @@
             Séries terminées, épisodes vus, genres explorés : tout se déduit de
             ta liste. Il faut un compte pour en avoir une.
           </p>
-          <button type="button" id="succes-connexion" class="btn-primary">Créer mon compte</button>
+          <div class="invite-boutons">
+            <button type="button" id="succes-connexion" class="btn-primary">Créer mon compte</button>
+            <button type="button" id="succes-login" class="btn-ghost">J'ai déjà un compte</button>
+          </div>
         </div>
 
         <div id="succes-contenu" hidden>
@@ -472,7 +481,10 @@
             Les membres qui le souhaitent publient leur liste et leurs notes.
             Il faut un compte pour y accéder — et pour publier la tienne.
           </p>
-          <button type="button" id="profils-connexion" class="btn-primary">Créer mon compte</button>
+          <div class="invite-boutons">
+            <button type="button" id="profils-connexion" class="btn-primary">Créer mon compte</button>
+            <button type="button" id="profils-login" class="btn-ghost">J'ai déjà un compte</button>
+          </div>
         </div>
 
         <div id="profils-contenu" hidden>
@@ -635,8 +647,5 @@
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script type="module" src="app.js"></script>
-  <!-- Comptage des visites pour le tableau de bord. Les chiffres vont dans la Realtime Database du
-       projet (pas Firestore), sous stats/animezone/ ; ses règles sont dans database.rules.json. -->
-  <script src="suivi.js" data-site="animezone" data-page="avenir" data-base="https://animezone-8d2f5-default-rtdb.europe-west1.firebasedatabase.app" defer></script>
 </body>
 </html>

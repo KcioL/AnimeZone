@@ -248,6 +248,7 @@ onAuthStateChanged(auth, async (user) => {
   $("logout").hidden           = !connecte;
   $("supprimer-compte").hidden = !connecte;
   $("ouvrir-connexion").hidden = connecte;
+  $("ouvrir-login").hidden     = connecte;
   $("liste-invite").hidden     = connecte;
   $("liste-contenu").hidden    = !connecte;
 
@@ -294,8 +295,16 @@ function fermerConnexion() {
   hideError();
 }
 
+/* Deux portes d'entrée distinctes plutôt qu'une seule suivie d'une bascule :
+   quelqu'un qui a déjà un compte n'a pas à passer par un formulaire
+   d'inscription pour trouver celui de connexion. */
 $("ouvrir-connexion").addEventListener("click", () => ouvrirConnexion(null, "signup"));
+$("ouvrir-login").addEventListener("click",     () => ouvrirConnexion(null, "login"));
+
 $("invite-connexion").addEventListener("click", () => ouvrirConnexion(null, "signup"));
+$("invite-login").addEventListener("click",     () => ouvrirConnexion(null, "login"));
+$("succes-login").addEventListener("click",     () => ouvrirConnexion(null, "login"));
+$("profils-login").addEventListener("click",    () => ouvrirConnexion(null, "login"));
 $("auth-fermer").addEventListener("click", fermerConnexion);
 
 // Clic sur le fond, ou touche Échap : deux façons attendues de refermer.
@@ -570,9 +579,6 @@ function showView(nom) {
      la hauteur de la grille qu'on vient de réafficher. */
   const cible = (nom === "fiche" || nom === "profil") ? 0 : (defilements[nom] || 0);
   requestAnimationFrame(() => window.scrollTo(0, cible));
-
-  // Comptage des visites par onglet pour le tableau de bord (voir suivi.js)
-  window.suivi?.page(nom);
 }
 
 /* ══════════════════ À venir ══════════════════ */
@@ -661,18 +667,13 @@ $("search-input").addEventListener("input", () => {
 
   $("search-input").classList.add("is-searching");
   minuteur = setTimeout(() => lancerRecherche(terme), 350);
-  // Tableau de bord : la recherche est comptée quand on s'arrête d'écrire (pas chaque lettre)
-  clearTimeout(minuteurRechercheSuivie);
-  minuteurRechercheSuivie = setTimeout(() => window.suivi?.recherche(terme), 2000);
 });
-let minuteurRechercheSuivie = null;
 
 $("search-form").addEventListener("submit", (e) => {
   e.preventDefault();
   clearTimeout(minuteur);
   const terme = $("search-input").value.trim();
-  clearTimeout(minuteurRechercheSuivie);
-  if (terme) { lancerRecherche(terme); window.suivi?.recherche(terme); }
+  if (terme) lancerRecherche(terme);
 });
 
 async function lancerRecherche(terme) {
@@ -2538,8 +2539,6 @@ function ouvrirFiche(a) {
   ficheCourante = a;
   majFiche();
   showView("fiche");
-  // Tableau de bord : les animes les plus consultés (voir suivi.js)
-  if (a && a.id) window.suivi?.contenu("anime", a.id, a.title);
 }
 
 function majFiche() {
@@ -2619,9 +2618,6 @@ $("fiche-ajouter").addEventListener("click", async () => {
       format: (a.format || "").slice(0, 20)
     });
     toast(`${a.title} est dans ta liste.`);
-    // Tableau de bord : les animes les plus ajoutés aux listes
-    window.suivi?.contenu("ajout", a.id, a.title);
-    window.suivi?.action("ajout-liste");
   } catch (err) {
     console.error("Ajout :", err.code, err.message);
     toast("L'ajout a échoué.");
